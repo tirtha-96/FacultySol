@@ -1,38 +1,49 @@
-# AssessAI architecture
+# FacultySol architecture
 
-AssessAI separates semantic interpretation from verifiable calculations.
+## Request path
 
-1. Documents enter through a validated multipart endpoint (PDF, DOCX, or text; size-limited).
-2. Parsers normalize text and preserve page boundaries when available. Low-quality extraction is reported for faculty correction.
-3. The AI adapter returns schema-validated classifications: topic, CLO, Bloom level, difficulty, confidence, reasoning, and candidate similarities. Demo mode uses transparent seeded classifications.
-4. The deterministic engine calculates mark totals, distributions, target variance, thresholds, recommendations, and the weighted health indicator.
-5. Faculty edits create an approved revision; recalculation produces an immutable analysis version for before/after comparison.
+```text
+browser session → Express ownership check → durable repository
+       source text/PDF → extraction + stable locators → faculty confirmation
+       confirmed input hash → Gemini structured mapping → Zod/ID/quote validation
+       validated mappings → deterministic arithmetic → immutable snapshot
+       faculty edit → new question version → stale snapshot → reanalysis
+```
 
-The browser never receives AI credentials. Production persistence is PostgreSQL through Prisma; demo mode can run from the in-memory repository without infrastructure.
+Uploaded content is untrusted data. The provider system instruction rejects document-embedded directives, and output cannot create unknown question/source IDs or verified quotes that do not occur in stored source text. Whitespace matching collapses consecutive whitespace to one space and trims ends.
 
-## UI information architecture
+## Responsibilities
 
-- Public: landing and product explanation.
-- Workspace: dashboard, courses, assessments, reports, settings.
-- Assessment workspace: Overview, Alignment, Questions, Similarity, Recommendations, Compare, Report.
-- Evidence drawers keep issue → evidence → reasoning → impact → action in context.
+- **AI adapter:** primary topic/CLO mapping, Bloom and difficulty estimates, wording concerns, bounded historical comparison, targeted revisions.
+- **Deterministic engine:** leaf marks, Unknown counts, allocations, target fit, available-component reweighting, finding triggers, snapshot comparisons.
+- **Faculty:** confirms parsing and scope, overrides mappings, accepts/edits/dismisses, and owns the paper versions.
+- **Repository:** ownership, atomic persistence, versions, decisions, stale flags, interrupted-run recovery, and delete cascade within each serialized review.
 
-## REST contract
+Demo semantics are accepted only for a private clone of the exact synthetic sample. Custom reviews require `GEMINI_API_KEY`; otherwise the API returns `AI_NOT_CONFIGURED`.
 
-All responses use `{ data, meta? }`; failures use `{ error: { code, message, details? } }`.
+## State and concurrency
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET/POST | `/api/courses` | List or create courses |
-| GET | `/api/courses/:id` | Course, CLO, topic, and assessment detail |
-| POST | `/api/assessments` | Create an assessment |
-| GET | `/api/assessments/:id` | Assessment setup |
-| POST | `/api/assessments/:id/documents` | Validate, upload, and extract a document |
-| POST | `/api/assessments/:id/analyze` | Run semantic then deterministic analysis |
-| GET | `/api/assessments/:id/analysis` | Latest or versioned result |
-| GET | `/api/assessments/:id/questions` | Structured editable questions |
-| PATCH | `/api/questions/:id` | Record a faculty-approved override |
-| POST | `/api/questions/:id/improve` | Produce a review-required alternative |
-| GET | `/api/assessments/:id/recommendations` | Prioritized recommendations |
-| POST | `/api/recommendations/:id/:decision` | Accept or dismiss a recommendation |
-| GET | `/api/assessments/:id/report` | Report-ready analysis payload |
+Every semantic run captures a SHA-256 hash of question identity/text/marks, faculty mappings, sources, scope, total, and choice rule. The repository compares that hash immediately before committing the result. A late response for an older paper receives `STALE_ANALYSIS` and cannot replace current work. Duplicate UI submissions are disabled while a request is active.
+
+The development repository writes one JSON store through temp-file + rename. On API boot, any `analyzing` review becomes `interrupted`. The browser owns a random session ID in local storage and sends it on every request; the API never trusts an assessment ID alone.
+
+## Key routes
+
+| Method     | Route                                      | Purpose                                        |
+| ---------- | ------------------------------------------ | ---------------------------------------------- |
+| GET        | `/api/reviews`                             | Session-owned review list plus sample template |
+| POST       | `/api/sample/import`                       | Private synthetic sample clone                 |
+| POST/PATCH | `/api/assessments`, `/api/assessments/:id` | Create and confirm a review                    |
+| POST       | `/api/assessments/:id/sources`             | Save pasted source text                        |
+| POST       | `/api/assessments/:id/documents`           | Extract PDF/TXT source                         |
+| POST       | `/api/assessments/:id/analyze`             | Semantic mapping then deterministic snapshot   |
+| POST       | `.../questions/:questionId/suggest`        | Targeted, non-mutating proposal                |
+| POST       | `.../questions/:questionId/accept`         | Faculty-approved saved version                 |
+| POST       | `/api/assessments/:id/undo`                | Restore as another saved version               |
+| POST       | `.../recommendations/:recId/dismiss`       | Persist faculty decision                       |
+| GET        | `/api/assessments/:id/report`              | Reproducible report/JSON payload               |
+| DELETE     | `/api/assessments/:id`                     | Delete owned review and serialized children    |
+
+## Deployment boundary
+
+The checked-in Prisma schema is not the active repository adapter. Use the JSON adapter only for local/single-instance durable development. Production still requires a Prisma repository implementation, migrations for the expanded snapshot/source/version contract, authentication, and host-supported PostgreSQL storage.

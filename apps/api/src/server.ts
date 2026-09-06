@@ -1,4 +1,6 @@
-import 'dotenv/config';
-import { app } from './app.js';
-const port=Number(process.env.PORT??4000);
-app.listen(port,()=>console.log(`AssessAI API listening on http://localhost:${port}`));
+import "dotenv/config";
+import { app } from "./app.js";
+const port = Number(process.env.PORT ?? 4000);
+app.listen(port, () =>
+  console.log(`FacultySol API listening on http://localhost:${port}`),
+);

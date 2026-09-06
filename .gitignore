@@ -6,3 +6,5 @@ coverage
 database/dev.db
 uploads/*
 !uploads/.gitkeep
+data/
+apps/api/data/

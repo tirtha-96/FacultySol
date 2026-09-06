@@ -1,18 +1,1019 @@
-import { AlertTriangle, ArrowLeft, ArrowRight, Check, ChevronDown, FileDown, Info, RefreshCw, SlidersHorizontal, Sparkles } from 'lucide-react';import { useMemo, useState } from 'react';import type { Analysis, Assessment as AssessmentType, Recommendation } from '@assessai/shared';import { ScoreRing } from '../components/ScoreRing';import { DistributionBars } from '../components/DistributionBars';import { RecommendationCard } from '../components/RecommendationCard';import { EvidenceDrawer } from '../components/EvidenceDrawer';
-const componentLabels={cloAlignment:'CLO alignment',topicCoverage:'Topic coverage',difficultyBalance:'Difficulty balance',bloomDistribution:'Bloom distribution',questionDiversity:'Question diversity',historicalSimilarity:'Historical similarity',markDistribution:'Mark distribution'};
-type Tab='Overview'|'Alignment'|'Questions'|'Similarity'|'Recommendations'|'Compare'|'Report';
-export function AssessmentPage({assessment,analysis,before,onBack,onImprove}:{assessment:AssessmentType;analysis:Analysis;before?:Analysis;onBack:()=>void;onImprove:()=>void}){const [tab,setTab]=useState<Tab>(before?'Compare':'Overview');const [drawer,setDrawer]=useState<Recommendation>();const tabs:Tab[]=['Overview','Alignment','Questions','Similarity','Recommendations','Compare','Report'];return <div className="assessment-page"><header className="assessment-head"><div><button className="icon-button" onClick={onBack}><ArrowLeft/></button><div><span>{assessment.course.code} · {assessment.course.name}</span><h1>{assessment.title} {assessment.year}</h1></div></div><div><span className="mode"><span/> Demo analysis</span><button className="secondary"><FileDown/> Export report</button></div></header><nav className="assessment-tabs">{tabs.map(x=><button className={tab===x?'active':''} onClick={()=>setTab(x)} key={x}>{x}{x==='Recommendations'&&<b>{analysis.recommendations.length}</b>}</button>)}</nav><main className="analysis-main">{tab==='Overview'&&<Overview analysis={analysis} onWhy={setDrawer} onReview={r=>{setDrawer(r)}} onTab={setTab}/>} {tab==='Alignment'&&<Alignment analysis={analysis}/>} {tab==='Questions'&&<Questions analysis={analysis} onImprove={onImprove}/>} {tab==='Similarity'&&<Similarity analysis={analysis}/>} {tab==='Recommendations'&&<Recommendations analysis={analysis} onWhy={setDrawer} onImprove={onImprove}/>} {tab==='Compare'&&<Compare before={before} after={analysis} onImprove={onImprove}/>} {tab==='Report'&&<Report assessment={assessment} analysis={analysis}/>}</main><EvidenceDrawer item={drawer} onClose={()=>setDrawer(undefined)}/></div>}
+import { useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Check,
+  Download,
+  Eye,
+  FileText,
+  History,
+  Info,
+  PenLine,
+  Printer,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react";
+import type {
+  Analysis,
+  Assessment as AssessmentType,
+  Question,
+  Recommendation,
+  Revision,
+} from "@assessai/shared";
+import { api } from "../api";
+import { DistributionBars } from "../components/DistributionBars";
+type Tab = "Findings" | "Coverage" | "Report";
+export function AssessmentPage({
+  assessment,
+  analysis,
+  meta,
+  onBack,
+  onReload,
+  onImprove,
+  onDelete,
+}: {
+  assessment: AssessmentType;
+  analysis?: Analysis;
+  meta?: {
+    status?: string;
+    sample?: boolean;
+    updatedAt?: string;
+    revisions?: Revision[];
+    previousAnalysis?: Analysis;
+  };
+  onBack: () => void;
+  onReload?: () => Promise<void> | void;
+  onImprove?: () => void;
+  onDelete?: () => void;
+}) {
+  const [tab, setTab] = useState<Tab>(() => {
+    const requested = new URLSearchParams(location.search).get("tab");
+    return requested === "Coverage" || requested === "Report"
+      ? requested
+      : "Findings";
+  });
+  const [selected, setSelected] = useState(assessment.questions[0]?.id);
+  const [filter, setFilter] = useState("");
+  const [finding, setFinding] = useState<Recommendation>();
+  const [suggest, setSuggest] = useState<any>();
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [paperPrint, setPaperPrint] = useState(false);
+  const q = assessment.questions.find((x) => x.id === selected);
+  const findings = analysis?.recommendations ?? [];
+  const visible = useMemo(
+    () =>
+      assessment.questions.filter(
+        (x) =>
+          !filter ||
+          x.cloCode === filter ||
+          x.bloom === filter ||
+          x.topic === filter,
+      ),
+    [assessment.questions, filter],
+  );
+  const run = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await api.analyze(assessment.id);
+      await onReload?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Analysis failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const requestRevision = async (question = q) => {
+    if (!question) return;
+    setBusy(true);
+    setError("");
+    try {
+      setSuggest(
+        await api.suggest(assessment.id, question.id, {
+          preserveMarks: true,
+          cloCode: question.cloCode,
+          bloom: question.bloom,
+        }),
+      );
+      setSelected(question.id);
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Suggestion failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const accept = async () => {
+    if (!q || !suggest) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api.accept(assessment.id, q.id, {
+        text: suggest.question,
+        marks: q.marks,
+        cloCode: suggest.cloCode ?? q.cloCode,
+        bloom: suggest.bloom ?? q.bloom,
+        rationale: suggest.explanation || "Faculty-approved revision",
+      });
+      setSuggest(undefined);
+      try {
+        await api.analyze(assessment.id);
+      } catch (e) {
+        setError(
+          `${e instanceof Error ? e.message : "Reanalysis failed"} The accepted edit is saved and the prior analysis remains stale.`,
+        );
+      }
+      await onReload?.();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const manual = async (
+    text: string,
+    marks: number | null,
+    cloCode: string,
+    bloom: Question["bloom"],
+  ) => {
+    if (!q) return;
+    setBusy(true);
+    try {
+      await api.accept(assessment.id, q.id, {
+        text,
+        marks,
+        cloCode,
+        bloom,
+        rationale: "Faculty manual edit",
+      });
+      setEditing(false);
+      await onReload?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const exportJson = async () => {
+    const data = await api.report(assessment.id),
+      url = URL.createObjectURL(
+        new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+      ),
+      a = document.createElement("a");
+    a.href = url;
+    a.download =
+      `${assessment.course.code}-${assessment.title}-review.json`.replace(
+        /\s+/g,
+        "-",
+      );
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <div className={`assessment-page ${paperPrint ? "paper-print" : ""}`}>
+      <header className="assessment-head">
+        <div>
+          <button
+            className="icon-button"
+            aria-label="Back to reviews"
+            onClick={onBack}
+          >
+            <ArrowLeft />
+          </button>
+          <div>
+            <span>
+              {assessment.course.code} · {assessment.course.name}
+            </span>
+            <h1>
+              {assessment.title} {assessment.year}
+            </h1>
+          </div>
+        </div>
+        <div className="review-status">
+          <span className={`mode ${meta?.sample ? "sample" : ""}`}>
+            <span />
+            {meta?.sample
+              ? "Sample mode · synthetic material"
+              : analysis?.generatedBy === "live-ai"
+                ? "Live AI"
+                : "Custom review"}
+          </span>
+          <span className="save-chip">
+            {meta?.status === "interrupted"
+              ? "Run interrupted"
+              : analysis?.stale
+                ? "Saved · analysis stale"
+                : "Saved"}
+          </span>
+          <button className="secondary" onClick={run} disabled={busy}>
+            <RefreshCw />
+            {busy ? "Working…" : analysis ? "Rerun checks" : "Run analysis"}
+          </button>
+          <button
+            className="icon-button"
+            aria-label="Export JSON"
+            onClick={exportJson}
+          >
+            <Download />
+          </button>
+          <button
+            className="icon-button"
+            aria-label="Delete review"
+            onClick={onDelete}
+          >
+            <Trash2 />
+          </button>
+        </div>
+      </header>
+      <nav className="assessment-tabs" aria-label="Review views">
+        {(["Findings", "Coverage", "Report"] as Tab[]).map((x) => (
+          <button
+            className={tab === x ? "active" : ""}
+            onClick={() => setTab(x)}
+            key={x}
+          >
+            {x}
+            {x === "Findings" && (
+              <b>{findings.filter((f) => f.status === "pending").length}</b>
+            )}
+          </button>
+        ))}
+      </nav>
+      {error && (
+        <div className="workspace-alert" role="alert">
+          <AlertTriangle />
+          {error}
+          <button onClick={() => setError("")} aria-label="Dismiss message">
+            <X />
+          </button>
+        </div>
+      )}
+      {tab === "Findings" && (
+        <main className="review-workspace">
+          <aside className="question-rail">
+            <label className="rail-search">
+              <Search />
+              <input
+                aria-label="Search questions"
+                placeholder="Search questions"
+                onChange={(e) => {
+                  const term = e.target.value.toLowerCase();
+                  setFilter(
+                    term
+                      ? (assessment.questions.find((x) =>
+                          x.text.toLowerCase().includes(term),
+                        )?.cloCode ?? term)
+                      : "",
+                  );
+                }}
+              />
+            </label>
+            {filter && (
+              <button className="clear-filter" onClick={() => setFilter("")}>
+                Clear filter: {filter} <X />
+              </button>
+            )}
+            <div className="finding-list">
+              <h2>Findings</h2>
+              {findings.length ? (
+                findings.map((f) => (
+                  <button
+                    key={f.id}
+                    className={finding?.id === f.id ? "selected" : ""}
+                    onClick={() => {
+                      setFinding(f);
+                      if (f.targetQuestionId) setSelected(f.targetQuestionId);
+                    }}
+                  >
+                    <span className={`severity-dot ${f.severity}`} />
+                    <div>
+                      <strong>{f.title}</strong>
+                      <small>
+                        {f.status === "dismissed"
+                          ? "Dismissed"
+                          : f.severity + " priority"}
+                      </small>
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <div className="empty-mini">
+                  Run analysis to create source-checked findings.
+                </div>
+              )}
+            </div>
+            <div className="question-list">
+              <h2>
+                Questions <span>{visible.length}</span>
+              </h2>
+              {visible.map((item) => (
+                <button
+                  className={selected === item.id ? "selected" : ""}
+                  onClick={() => {
+                    setSelected(item.id);
+                    setFinding(undefined);
+                    setSuggest(undefined);
+                  }}
+                  key={item.id}
+                >
+                  <b>{item.number}</b>
+                  <div>
+                    <strong>{item.text}</strong>
+                    <small>
+                      {item.cloCode} · {item.bloom} estimate ·{" "}
+                      {item.marks ?? "Unknown"} marks
+                    </small>
+                  </div>
+                  {item.concerns.length > 0 && (
+                    <AlertTriangle aria-label="Has concern" />
+                  )}
+                </button>
+              ))}
+            </div>
+          </aside>
+          <section className="question-detail">
+            {finding ? (
+              <FindingDetail
+                item={finding}
+                assessment={assessment}
+                onClose={() => setFinding(undefined)}
+                onSuggest={() =>
+                  requestRevision(
+                    assessment.questions.find(
+                      (x) => x.id === finding.targetQuestionId,
+                    ),
+                  )
+                }
+                onEdit={() => {
+                  setFinding(undefined);
+                  setEditing(true);
+                }}
+                onDismiss={async () => {
+                  await api.dismiss(assessment.id, finding.id);
+                  setFinding(undefined);
+                  await onReload?.();
+                }}
+              />
+            ) : q ? (
+              <>
+                <div className="detail-head">
+                  <div>
+                    <span>QUESTION {q.number}</span>
+                    <h2>{q.text}</h2>
+                    <p>
+                      {q.cloCode} · {q.topic} · Bloom estimate: {q.bloom} ·
+                      Difficulty estimate: {q.difficulty}
+                    </p>
+                  </div>
+                  <span className="marks-box">
+                    {q.marks ?? "?"}
+                    <small>marks</small>
+                  </span>
+                </div>
+                <div className="question-actions">
+                  <button
+                    className="secondary"
+                    onClick={() => requestRevision()}
+                    disabled={busy}
+                  >
+                    <Sparkles />
+                    Suggest revision
+                  </button>
+                  <button
+                    className="secondary"
+                    onClick={() => setEditing(true)}
+                  >
+                    <PenLine />
+                    Edit manually
+                  </button>
+                  {meta?.revisions?.length ? (
+                    <button
+                      className="secondary"
+                      onClick={async () => {
+                        await api.undo(assessment.id);
+                        await onReload?.();
+                      }}
+                    >
+                      <RotateCcw />
+                      Restore prior version
+                    </button>
+                  ) : null}
+                </div>
+                {q.sourceRef && (
+                  <section className="evidence-block">
+                    <label>
+                      <Eye />
+                      Source evidence
+                    </label>
+                    <blockquote>{q.sourceRef.excerpt}</blockquote>
+                    <small>
+                      Paragraph {q.sourceRef.paragraph ?? "—"} ·{" "}
+                      {assessment.sources?.find(
+                        (s) => s.id === q.sourceRef?.sourceId,
+                      )?.title ?? "Current paper"}
+                    </small>
+                  </section>
+                )}
+                {q.analysisExplanation && (
+                  <section className="evidence-block">
+                    <label>Why this mapping?</label>
+                    <p>{q.analysisExplanation}</p>
+                    {q.analysisEvidence?.length ? (
+                      q.analysisEvidence.map((ref) => (
+                        <blockquote key={`${ref.sourceId}-${ref.start}`}>
+                          {ref.excerpt}
+                          <small>
+                            {assessment.sources?.find(
+                              (s) => s.id === ref.sourceId,
+                            )?.title ?? ref.sourceId}
+                          </small>
+                        </blockquote>
+                      ))
+                    ) : (
+                      <p className="unavailable">
+                        The model explanation had no verified source quote.
+                      </p>
+                    )}
+                  </section>
+                )}
+                {q.similarity && (
+                  <section className="side-by-side">
+                    <div>
+                      <label>Current · {q.number}</label>
+                      <p>{q.text}</p>
+                    </div>
+                    <div>
+                      <label>
+                        Historical ·{" "}
+                        {q.similarity.previous.title ??
+                          q.similarity.previous.year}
+                      </label>
+                      <p>{q.similarity.previous.text}</p>
+                    </div>
+                    <footer>
+                      <strong>
+                        {q.similarity.kind?.replace("-", " ") ?? "Similarity"}
+                      </strong>
+                      <span>{q.similarity.reason}</span>
+                      {q.similarity.kind === "shared-topic" && (
+                        <em>Shared topic only — not a repetition warning.</em>
+                      )}
+                    </footer>
+                  </section>
+                )}
+                {q.concerns.length > 0 && (
+                  <section className="concern-box">
+                    <AlertTriangle />
+                    <div>
+                      <strong>Needs faculty review</strong>
+                      {q.concerns.map((c) => (
+                        <p key={c}>{c}</p>
+                      ))}
+                    </div>
+                  </section>
+                )}
+                {!q.sourceRef && (
+                  <p className="unavailable">
+                    <Info />
+                    Verified excerpt unavailable for this mapping.
+                  </p>
+                )}
+              </>
+            ) : (
+              <div className="empty-state">No questions match this filter.</div>
+            )}
+          </section>
+        </main>
+      )}
+      {tab === "Coverage" && analysis && (
+        <Coverage
+          analysis={analysis}
+          onFilter={(x) => {
+            setFilter(x);
+            setTab("Findings");
+          }}
+        />
+      )}
+      {tab === "Report" && analysis && (
+        <Report
+          assessment={assessment}
+          analysis={analysis}
+          revisions={meta?.revisions ?? []}
+          previous={meta?.previousAnalysis}
+          onPrint={() => window.print()}
+          onPaper={() => {
+            setPaperPrint(true);
+            setTimeout(() => {
+              window.print();
+              setPaperPrint(false);
+            }, 50);
+          }}
+        />
+      )}
+      {suggest && q && (
+        <RevisionDialog
+          q={q}
+          value={suggest}
+          busy={busy}
+          onChange={setSuggest}
+          onAccept={accept}
+          onRegenerate={() => requestRevision()}
+          onCancel={() => setSuggest(undefined)}
+        />
+      )}{" "}
+      {editing && q && (
+        <EditDialog
+          q={q}
+          busy={busy}
+          onSave={manual}
+          onCancel={() => setEditing(false)}
+        />
+      )}{" "}
+      {paperPrint && (
+        <div className="clean-paper">
+          <h1>
+            {assessment.course.code} · {assessment.course.name}
+          </h1>
+          <p>
+            {assessment.title} · {assessment.year} ·{" "}
+            {assessment.totalMarks ?? "Unconfirmed"} marks ·{" "}
+            {assessment.duration} minutes
+          </p>
+          {assessment.questions.map((x) => (
+            <article key={x.id}>
+              <strong>{x.number}.</strong>
+              <span>{x.text}</span>
+              <b>[{x.marks ?? "?"}]</b>
+            </article>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
-function Overview({analysis,onWhy,onReview,onTab}:{analysis:Analysis;onWhy:(r:Recommendation)=>void;onReview:(r:Recommendation)=>void;onTab:(t:Tab)=>void}){return <><section className="overview-hero"><div className="health"><ScoreRing score={analysis.overallScore}/><div><span>ASSESSMENT HEALTH INDICATOR</span><h2>{analysis.label}</h2><p>{analysis.summary}</p><small><Info/> AI-assisted quality indicator—not an accreditation standard.</small></div></div><div className="component-grid">{Object.entries(analysis.components).slice(0,4).map(([k,v])=><article key={k}><span>{componentLabels[k as keyof typeof componentLabels]}</span><strong>{v}<small>/100</small></strong><div><i style={{width:`${v}%`}}/></div></article>)}</div></section><section className="analysis-grid"><div><div className="panel"><div className="panel-head"><div><h2>Priority insights</h2><p>Evidence-backed areas for faculty review.</p></div><button className="text-button" onClick={()=>onTab('Recommendations')}>View all <ArrowRight/></button></div><div className="rec-list">{analysis.recommendations.slice(0,3).map((r,i)=><RecommendationCard key={r.id} item={r} index={i} onWhy={onWhy} onReview={onReview}/>)}</div></div><div className="panel question-snapshot"><div className="panel-head"><div><h2>Question review snapshot</h2><p>{analysis.questions.filter(q=>q.concerns.length).length} of {analysis.questions.length} questions need attention.</p></div><button className="text-button" onClick={()=>onTab('Questions')}>Review questions <ArrowRight/></button></div>{analysis.questions.filter(q=>q.concerns.length).slice(0,3).map(q=><div className="q-snapshot" key={q.id}><b>{q.number}</b><p><strong>{q.text}</strong><span>{q.cloCode} · {q.bloom} · {q.marks} marks</span></p><span className="pill medium">Review</span></div>)}</div></div><aside><div className="panel"><div className="panel-head"><div><h2>CLO coverage</h2><p>Share of total marks</p></div><button className="icon-button"><SlidersHorizontal/></button></div><DistributionBars data={analysis.cloDistribution}/></div><div className="panel"><div className="panel-head"><div><h2>Cognitive demand</h2><p>Bloom's taxonomy by marks</p></div></div><DistributionBars data={analysis.bloomDistribution}/></div></aside></section></>}
-
-function Alignment({analysis}:{analysis:Analysis}){return <section className="detail-grid"><div className="panel"><div className="panel-head"><div><h2>CLO alignment</h2><p>Actual mark share compared with faculty-configured weighting.</p></div></div>{Object.entries(analysis.cloDistribution).map(([k,v])=><div className="compare-bar" key={k}><div><strong>{k}</strong><span>{v}% actual</span></div><div className="track"><i style={{width:`${v}%`}}/></div><small>Target 25%</small></div>)}</div><div className="panel"><div className="panel-head"><div><h2>Topic coverage</h2><p>Indicators use configured syllabus weights, not equal coverage.</p></div></div><DistributionBars data={analysis.topicDistribution}/></div><div className="panel"><div className="panel-head"><div><h2>Difficulty balance</h2><p>Target: 20% easy, 60% moderate, 20% hard.</p></div></div><DistributionBars data={analysis.difficultyDistribution}/></div><div className="panel"><div className="panel-head"><div><h2>Bloom distribution</h2><p>Faculty-editable AI-assisted classification.</p></div></div><DistributionBars data={analysis.bloomDistribution}/></div></section>}
-
-function Questions({analysis,onImprove}:{analysis:Analysis;onImprove:()=>void}){return <section className="panel table-panel"><div className="panel-head"><div><h2>Question-level review</h2><p>Inspect and override every AI-assisted classification.</p></div><button className="secondary"><SlidersHorizontal/> Filters</button></div><div className="question-table"><div className="tr table-header"><span>Question</span><span>Alignment</span><span>Bloom / difficulty</span><span>Marks</span><span>Status</span><span/></div>{analysis.questions.map(q=><div className="tr" key={q.id}><div><b>{q.number}</b><p>{q.text}</p></div><div><strong>{q.cloCode}</strong><span>{q.topic}</span></div><div><strong>{q.bloom}</strong><span>{q.difficulty} · {Math.round(q.confidence*100)}% confidence</span></div><strong>{q.marks}</strong><span className={`pill ${q.concerns.length?'medium':'good'}`}>{q.concerns.length?'Needs review':'Aligned'}</span><button className="icon-button" onClick={q.concerns.length?onImprove:undefined}><ChevronDown/></button></div>)}</div></section>}
-
-function Similarity({analysis}:{analysis:Analysis}){const matches=analysis.questions.filter(q=>q.similarity);return <section><div className="section-title"><div><h2>Historical similarity review</h2><p>Potential semantic overlap—not a plagiarism determination.</p></div><span className="threshold">High threshold ≥ 75%</span></div>{matches.map(q=><article className="similarity-card" key={q.id}><div className="similarity-score"><strong>{Math.round(q.similarity!.score*100)}%</strong><span>High similarity</span></div><div><label>Current · Question {q.number}</label><p>{q.text}</p></div><ArrowRight/><div><label>Previous · {q.similarity!.previous.year}</label><p>{q.similarity!.previous.text}</p></div><footer><Info/><span>{q.similarity!.reason}</span><button className="secondary">Review question</button></footer></article>)}</section>}
-
-function Recommendations({analysis,onWhy,onImprove}:{analysis:Analysis;onWhy:(r:Recommendation)=>void;onImprove:()=>void}){return <section><div className="section-title"><div><h2>Prioritized recommendations</h2><p>Review, edit, accept, or dismiss. No change is applied automatically.</p></div><span>{analysis.recommendations.length} open items</span></div><div className="recommendation-page">{analysis.recommendations.map((r,i)=><RecommendationCard key={r.id} item={r} index={i} onWhy={onWhy} onReview={onImprove}/>)}</div></section>}
-
-function Compare({before,after,onImprove}:{before?:Analysis;after:Analysis;onImprove:()=>void}){if(!before)return <div className="empty-state"><RefreshCw/><h2>No revised version yet</h2><p>Apply faculty-reviewed demo changes to create a new analysis version.</p><button className="primary" onClick={onImprove}><Sparkles/> Review suggested improvements</button></div>;const delta=after.overallScore-before.overallScore;return <section className="compare-page"><div className="compare-banner"><span>FACULTY-APPROVED REVISION</span><h2>Your assessment became more balanced</h2><p>Two reviewed question changes improved outcome coverage, cognitive demand, and historical diversity.</p><div><span><b>{before.overallScore}</b><small>Before</small></span><ArrowRight/><span className="after"><b>{after.overallScore}</b><small>After</small></span><strong>+{delta} points</strong></div></div><div className="compare-components">{Object.keys(after.components).map(k=>{const key=k as keyof typeof after.components;return <article key={k}><span>{componentLabels[key]}</span><div><b>{before.components[key]}</b><ArrowRight/><strong>{after.components[key]}</strong></div><small>+{Math.round(after.components[key]-before.components[key])} points</small></article>})}</div><div className="panel change-log"><div className="panel-head"><div><h2>What changed</h2><p>Every revision is traceable to a faculty-reviewed action.</p></div></div><p><Check/><span><strong>Question 5</strong> replaced a historically similar explanation prompt with a route-planning design task.</span></p><p><Check/><span><strong>Question 4(a)</strong> changed from recall to an evidence-based data-structure evaluation.</span></p></div></section>}
-
-function Report({assessment,analysis}:{assessment:AssessmentType;analysis:Analysis}){return <section className="report panel"><div className="report-brand">ASSESS<span>AI</span><small>Assessment quality report</small></div><h1>{assessment.course.code} · {assessment.course.name}</h1><p>{assessment.title} · {assessment.year} · {assessment.totalMarks} marks · {assessment.duration} minutes</p><div className="report-score"><ScoreRing score={analysis.overallScore} size={140}/><div><span>EXECUTIVE SUMMARY</span><h2>{analysis.label}</h2><p>{analysis.summary}</p></div></div><h2>Score composition</h2><div className="component-grid report-components">{Object.entries(analysis.components).map(([k,v])=><article key={k}><span>{componentLabels[k as keyof typeof componentLabels]}</span><strong>{v}</strong></article>)}</div><div className="report-note"><Info/><p><strong>Interpretation note</strong><span>This report provides AI-assisted analytical indicators based on configured course data. Faculty judgment remains final.</span></p></div></section>}
+function FindingDetail({
+  item,
+  assessment,
+  onClose,
+  onSuggest,
+  onEdit,
+  onDismiss,
+}: {
+  item: Recommendation;
+  assessment: AssessmentType;
+  onClose: () => void;
+  onSuggest: () => void;
+  onEdit: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="finding-detail">
+      <button
+        className="icon-button close"
+        aria-label="Close evidence"
+        onClick={onClose}
+      >
+        <X />
+      </button>
+      <span className={`pill ${item.severity}`}>{item.severity} priority</span>
+      <h2>{item.title}</h2>
+      <section>
+        <label>What was found</label>
+        <p>{item.reason}</p>
+      </section>
+      <section>
+        <label>Verified evidence</label>
+        <blockquote>{item.evidence}</blockquote>
+        {item.evidenceRefs?.length ? (
+          <small>
+            {item.evidenceRefs
+              .map(
+                (r) =>
+                  assessment.sources?.find((s) => s.id === r.sourceId)?.title ??
+                  r.sourceId,
+              )
+              .join(", ")}
+          </small>
+        ) : (
+          <small>
+            Direct source locator unavailable; treat this explanation as
+            unsupported context.
+          </small>
+        )}
+      </section>
+      {item.uncertainty && (
+        <section>
+          <label>Uncertainty</label>
+          <p>{item.uncertainty}</p>
+        </section>
+      )}
+      <section>
+        <label>Recommended action</label>
+        <p>{item.action}</p>
+      </section>
+      <div className="action-stack">
+        <button
+          className="primary"
+          disabled={!item.targetQuestionId}
+          onClick={onSuggest}
+        >
+          <Sparkles />
+          Suggest revision
+        </button>
+        <button
+          className="secondary"
+          disabled={!item.targetQuestionId}
+          onClick={onEdit}
+        >
+          <PenLine />
+          Edit manually
+        </button>
+        <button className="secondary" onClick={onDismiss}>
+          Dismiss finding
+        </button>
+      </div>
+    </div>
+  );
+}
+function Coverage({
+  analysis,
+  onFilter,
+}: {
+  analysis: Analysis;
+  onFilter: (x: string) => void;
+}) {
+  return (
+    <main className="coverage-grid">
+      <section className="panel">
+        <h2>Outcome allocation</h2>
+        <p>Share of known leaf-part marks. Select a row to filter questions.</p>
+        <DistributionBars data={analysis.cloDistribution} />
+        {Object.keys(analysis.cloDistribution).map((k) => (
+          <button className="data-link" key={k} onClick={() => onFilter(k)}>
+            Show {k} questions
+          </button>
+        ))}
+      </section>
+      <section className="panel">
+        <h2>Bloom estimates</h2>
+        <p>
+          Classification reflects demanded work and remains faculty-editable.
+        </p>
+        <DistributionBars data={analysis.bloomDistribution} />
+        {Object.keys(analysis.bloomDistribution).map((k) => (
+          <button className="data-link" key={k} onClick={() => onFilter(k)}>
+            Show {k}
+          </button>
+        ))}
+      </section>
+      <section className="panel">
+        <h2>Topics</h2>
+        <DistributionBars data={analysis.topicDistribution} />
+      </section>
+      <section className="panel">
+        <h2>Difficulty estimates</h2>
+        <p>
+          Assumptions depend on prerequisites and expected work; this is not
+          student-performance evidence.
+        </p>
+        <DistributionBars data={analysis.difficultyDistribution} />
+      </section>
+      <section className="panel arithmetic">
+        <h2>Arithmetic</h2>
+        <strong>{analysis.totalMarks} known marks</strong>
+        <span>{analysis.unknownMarks} question parts with unknown marks</span>
+        <p>Parent subtotals are excluded when child parts exist.</p>
+      </section>
+      <section className="panel">
+        <h2>Historical comparison</h2>
+        <strong>
+          {analysis.historicalStatus === "not-assessed"
+            ? "Not assessed"
+            : "Assessed"}
+        </strong>
+        <p>
+          {analysis.historicalStatus === "not-assessed"
+            ? "No historical source was supplied. This is not a “no repeats” result."
+            : "Near-identical and similar-task findings are warnings; shared topic alone is not."}
+        </p>
+      </section>
+    </main>
+  );
+}
+function Report({
+  assessment,
+  analysis,
+  revisions,
+  previous,
+  onPrint,
+  onPaper,
+}: {
+  assessment: AssessmentType;
+  analysis: Analysis;
+  revisions: Revision[];
+  previous?: Analysis;
+  onPrint: () => void;
+  onPaper: () => void;
+}) {
+  const downloadSource = (
+    source: NonNullable<AssessmentType["sources"]>[number],
+  ) => {
+    const url = URL.createObjectURL(
+        new Blob([source.text], { type: "text/plain" }),
+      ),
+      a = document.createElement("a");
+    a.href = url;
+    a.download = source.filename ?? `${source.title}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <main className="report panel">
+      <div className="report-toolbar">
+        <button className="secondary" onClick={onPrint}>
+          <Printer />
+          Print / Save as PDF
+        </button>
+        <button className="secondary" onClick={onPaper}>
+          <FileText />
+          Clean question paper
+        </button>
+      </div>
+      <div className="report-brand">
+        FACULTY<span>SOL</span>
+        <small>Evidence-backed assessment review</small>
+      </div>
+      <h1>
+        {assessment.course.code} · {assessment.course.name}
+      </h1>
+      <p>
+        {assessment.title} · version {analysis.version} ·{" "}
+        {analysis.createdAt
+          ? new Date(analysis.createdAt).toLocaleString()
+          : "fixture date"}{" "}
+        · {analysis.generatedBy}
+      </p>
+      <section>
+        <h2>Review summary</h2>
+        <p>{analysis.summary}</p>
+        <p>
+          <strong>Experimental indicator:</strong>{" "}
+          {analysis.overallScore ?? "Unavailable"}. Available components are
+          reweighted; unavailable dimensions are excluded.
+        </p>
+      </section>
+      <section>
+        <h2>Sources</h2>
+        {assessment.sources?.map((s) => (
+          <p key={s.id}>
+            {s.title} · {s.kind} · {s.filename ?? "pasted text"}{" "}
+            <button className="data-link" onClick={() => downloadSource(s)}>
+              Download source
+            </button>
+          </p>
+        ))}
+      </section>
+      <section>
+        <h2>Scope</h2>
+        <p>
+          Outcomes: {assessment.scope?.cloCodes.join(", ") || "Not confirmed"}
+        </p>
+        <p>Topics: {assessment.scope?.topics.join(", ") || "Not confirmed"}</p>
+      </section>
+      <section>
+        <h2>Unresolved findings</h2>
+        {analysis.recommendations
+          .filter((x) => x.status === "pending")
+          .map((x) => (
+            <p key={x.id}>
+              <strong>{x.title}:</strong> {x.reason}
+            </p>
+          ))}
+      </section>
+      <section>
+        <h2>Accepted edits</h2>
+        {revisions.length ? (
+          revisions.map((r) => (
+            <p key={r.id}>
+              <strong>{r.original.number}:</strong> “{r.original.text}” → “
+              {r.revised.text}”
+            </p>
+          ))
+        ) : (
+          <p>No accepted edits.</p>
+        )}
+      </section>
+      {previous && (
+        <section>
+          <h2>Before / after snapshot</h2>
+          <p>
+            Version {previous.version}: {previous.summary}
+          </p>
+          <p>
+            Version {analysis.version}: {analysis.summary}
+          </p>
+          <p>
+            {previous.inputHash === analysis.inputHash
+              ? "Directly comparable under the same paper/settings."
+              : "Paper inputs changed; concrete findings are comparable, but the aggregate is not a like-for-like settings claim."}
+          </p>
+          {previous.recommendations
+            .filter(
+              (old) =>
+                old.type === "coverage" &&
+                !analysis.recommendations.some((now) => now.id === old.id),
+            )
+            .map((old) => (
+              <p key={old.id}>
+                <Check /> Previously uncovered outcome now assessed:{" "}
+                {old.title.replace(" is uncovered in the selected scope", "")}.
+              </p>
+            ))}
+          <p>
+            {
+              analysis.recommendations.filter(
+                (item) => item.type === "similarity",
+              ).length
+            }{" "}
+            historical overlap finding(s) remain.
+          </p>
+        </section>
+      )}
+      <section>
+        <h2>Limitations</h2>
+        {analysis.limitations?.map((x) => (
+          <p key={x}>{x}</p>
+        ))}
+      </section>
+    </main>
+  );
+}
+function RevisionDialog({
+  q,
+  value,
+  busy,
+  onChange,
+  onAccept,
+  onRegenerate,
+  onCancel,
+}: {
+  q: Question;
+  value: any;
+  busy: boolean;
+  onChange: (x: any) => void;
+  onAccept: () => void;
+  onRegenerate: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="dialog-backdrop" role="presentation">
+      <div
+        className="revision-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="revision-title"
+      >
+        <button
+          className="icon-button close"
+          aria-label="Close"
+          onClick={onCancel}
+        >
+          <X />
+        </button>
+        <span>
+          {value.mode === "sample-fixture"
+            ? "PRE-AUTHORED SAMPLE REVISION"
+            : "LIVE AI SUGGESTION"}
+        </span>
+        <h2 id="revision-title">Review proposed change</h2>
+        <div className="diff">
+          <div>
+            <label>Original</label>
+            <p>{q.text}</p>
+          </div>
+          <div>
+            <label>Proposed · editable</label>
+            <textarea
+              value={value.question}
+              onChange={(e) => onChange({ ...value, question: e.target.value })}
+            />
+          </div>
+        </div>
+        <p>{value.explanation}</p>
+        {value.cloCode && value.cloCode !== q.cloCode && (
+          <div className="workspace-alert">
+            <AlertTriangle />
+            Outcome mapping changes from {q.cloCode} to {value.cloCode}.
+            Accepting explicitly approves that change.
+          </div>
+        )}
+        <details>
+          <summary>Assumptions and trade-offs</summary>
+          <ul>
+            {[...(value.assumptions ?? []), ...(value.tradeoffs ?? [])].map(
+              (x: string) => (
+                <li key={x}>{x}</li>
+              ),
+            )}
+          </ul>
+        </details>
+        <div className="dialog-actions">
+          <button className="secondary" onClick={onCancel}>
+            Cancel
+          </button>
+          <button className="secondary" onClick={onRegenerate}>
+            Regenerate
+          </button>
+          <button className="primary" disabled={busy} onClick={onAccept}>
+            <Check />
+            {busy ? "Saving…" : "Accept edited proposal"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+function EditDialog({
+  q,
+  busy,
+  onSave,
+  onCancel,
+}: {
+  q: Question;
+  busy: boolean;
+  onSave: (
+    text: string,
+    marks: number | null,
+    clo: string,
+    bloom: Question["bloom"],
+  ) => void;
+  onCancel: () => void;
+}) {
+  const [text, setText] = useState(q.text),
+    [marks, setMarks] = useState<number | null>(q.marks),
+    [clo, setClo] = useState(q.cloCode),
+    [bloom, setBloom] = useState(q.bloom);
+  return (
+    <div className="dialog-backdrop">
+      <div className="revision-dialog" role="dialog" aria-modal="true">
+        <h2>Edit question {q.number}</h2>
+        <label>
+          Question
+          <textarea value={text} onChange={(e) => setText(e.target.value)} />
+        </label>
+        <div className="form-grid">
+          <label>
+            Marks
+            <input
+              type="number"
+              value={marks ?? ""}
+              onChange={(e) =>
+                setMarks(e.target.value ? Number(e.target.value) : null)
+              }
+            />
+          </label>
+          <label>
+            Outcome
+            <input value={clo} onChange={(e) => setClo(e.target.value)} />
+          </label>
+          <label>
+            Bloom estimate
+            <select
+              value={bloom}
+              onChange={(e) => setBloom(e.target.value as Question["bloom"])}
+            >
+              {[
+                "Unknown",
+                "Remember",
+                "Understand",
+                "Apply",
+                "Analyze",
+                "Evaluate",
+                "Create",
+              ].map((x) => (
+                <option key={x}>{x}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="dialog-actions">
+          <button className="secondary" onClick={onCancel}>
+            Cancel
+          </button>
+          <button
+            className="primary"
+            disabled={busy || text.length < 5}
+            onClick={() => onSave(text, marks, clo, bloom)}
+          >
+            Save new version
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

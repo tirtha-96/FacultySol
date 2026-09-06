@@ -1,1 +1,0 @@
-export function ScoreRing({score,size=172}:{score:number;size?:number}){return <div className="score-ring" style={{'--score':`${score*3.6}deg`,width:size,height:size} as React.CSSProperties}><div><strong>{score}</strong><span>/ 100</span></div></div>}
