@@ -749,6 +749,129 @@
   width: 100%;
   margin-top: 18px;
 }
+/* Stronger hierarchy and interactive feedback in the assessment workspace */
+.assessment-page {
+  background:
+    radial-gradient(circle at 86% 6%, rgba(118, 89, 199, 0.07), transparent 25rem),
+    linear-gradient(180deg, #f4f8f6, #f5f6f3 58%);
+}
+.assessment-head {
+  box-shadow: 0 7px 24px rgba(27, 54, 47, 0.045);
+  position: relative;
+  z-index: 2;
+}
+.assessment-head h1 { color: var(--navy); }
+.assessment-tabs {
+  box-shadow: 0 5px 18px rgba(25, 49, 43, 0.03);
+}
+.assessment-tabs button {
+  padding-inline: 5px;
+  transition: color 0.18s ease, background 0.18s ease;
+}
+.assessment-tabs button:hover { color: var(--green); }
+.assessment-tabs button.active:after {
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: linear-gradient(90deg, #237363, #6f58bd);
+}
+.review-workspace {
+  border-inline: 1px solid #dfe7e3;
+  box-shadow: 0 18px 50px rgba(26, 49, 43, 0.06);
+}
+.question-rail {
+  background: linear-gradient(180deg, #fbfdfc, #f7faf8);
+}
+.rail-search {
+  margin: 12px;
+  padding: 0 12px;
+  height: 42px;
+  border: 1px solid #dce6e1;
+  border-radius: 11px;
+  background: white;
+  box-shadow: 0 5px 15px rgba(25, 51, 44, 0.035);
+}
+.finding-list > button,
+.question-list > button {
+  border: 1px solid transparent;
+  transition: background 0.16s ease, border-color 0.16s ease,
+    transform 0.16s ease, box-shadow 0.16s ease;
+}
+.finding-list > button:hover,
+.question-list > button:hover {
+  background: white;
+  border-color: #d9e6e1;
+  transform: translateX(2px);
+  box-shadow: 0 7px 17px rgba(24, 50, 43, 0.055);
+}
+.finding-list > button.selected,
+.question-list > button.selected {
+  background: linear-gradient(135deg, #e7f3ef, #f0eef8);
+  border-color: #bfd9d1;
+  box-shadow: inset 3px 0 #367d6e;
+}
+.question-detail {
+  background:
+    radial-gradient(circle at 95% 4%, rgba(232, 169, 86, 0.09), transparent 17rem),
+    white;
+}
+.detail-head h2,
+.finding-detail h2 { color: var(--navy); }
+.marks-box {
+  background: linear-gradient(145deg, #e1f0eb, #ede9f8);
+  border: 1px solid #cedfd9;
+  color: #245d52;
+  box-shadow: 0 9px 22px rgba(33, 89, 79, 0.1);
+}
+.evidence-block blockquote,
+.finding-detail blockquote {
+  border-left-color: #df9c47;
+  background: linear-gradient(135deg, #fdf8ef, #fffaf5);
+  border-radius: 0 11px 11px 0;
+}
+.concern-box {
+  border: 1px solid #f0d2c7;
+  background: #fff5f1;
+  border-radius: 13px;
+  padding: 16px;
+}
+.coverage-grid .panel {
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.18s ease, box-shadow 0.18s ease,
+    border-color 0.18s ease;
+}
+.coverage-grid .panel:hover {
+  transform: translateY(-3px);
+  border-color: #bed4cd;
+  box-shadow: 0 15px 34px rgba(28, 52, 45, 0.085);
+}
+.coverage-grid .panel:before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  background: linear-gradient(90deg, #3a8c79, #79baa9);
+}
+.coverage-grid .panel:nth-child(2):before { background: linear-gradient(90deg, #755ac4, #a58ee0); }
+.coverage-grid .panel:nth-child(3):before { background: linear-gradient(90deg, #e06b55, #efa28f); }
+.coverage-grid .panel:nth-child(4):before { background: linear-gradient(90deg, #d89b43, #f0c47e); }
+.coverage-grid .panel:nth-child(5):before { background: linear-gradient(90deg, #3977d5, #7da9e7); }
+.coverage-grid .panel:nth-child(6):before { background: linear-gradient(90deg, #31566e, #7293a8); }
+.revision-dialog {
+  border: 1px solid #dce5e1;
+  box-shadow: 0 28px 80px rgba(14, 36, 43, 0.28);
+}
+.rec-card {
+  background: #fff;
+  transition: transform 0.18s ease, box-shadow 0.18s ease,
+    border-color 0.18s ease;
+}
+.rec-card:hover {
+  transform: translateY(-2px);
+  border-color: #bdd5ce;
+  box-shadow: 0 10px 26px rgba(28, 52, 45, 0.07);
+}
+
 @media (max-width: 1000px) {
   .hero {
     grid-template-columns: 1fr;

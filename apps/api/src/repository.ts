@@ -21,6 +21,7 @@ type Store = {
 export class DurableRepository {
   private file: string;
   private store: Store;
+  private originalsRoot: string;
   constructor(
     file = process.env.DEV_DATA_FILE ??
       (process.env.NODE_ENV === "test"
@@ -28,6 +29,7 @@ export class DurableRepository {
         : path.resolve(process.cwd(), "data", "reviews.json")),
   ) {
     this.file = file;
+    this.originalsRoot = path.join(path.dirname(this.file), "originals");
     this.store = this.load();
     this.ensureSample();
   }
@@ -182,6 +184,41 @@ export class DurableRepository {
     this.save();
     return source;
   }
+  updateSource(
+    id: string,
+    session: string,
+    source: SourceDocument,
+    questions?: Question[],
+  ) {
+    const r = this.get(id, session);
+    if (!r || r.sample) return;
+    const index = (r.assessment.sources ?? []).findIndex((x) => x.id === source.id);
+    if (index < 0) return;
+    r.assessment.sources![index] = source;
+    if (source.kind === "current-exam" && questions) r.assessment.questions = questions;
+    r.analyses.forEach((analysis) => (analysis.stale = true));
+    r.status = "ready";
+    r.updatedAt = new Date().toISOString();
+    this.save();
+    return source;
+  }
+  storeOriginal(reviewId: string, session: string, sourceId: string, bytes: Buffer) {
+    if (!this.get(reviewId, session)) return;
+    const directory = path.join(this.originalsRoot, reviewId);
+    fs.mkdirSync(directory, { recursive: true });
+    const target = path.join(directory, `${sourceId}.bin`);
+    fs.writeFileSync(target, bytes);
+    return path.relative(path.dirname(this.file), target).replace(/\\/g, "/");
+  }
+  readOriginal(reviewId: string, session: string, sourceId: string) {
+    if (!this.get(reviewId, session)) return;
+    const target = path.join(this.originalsRoot, reviewId, `${sourceId}.bin`);
+    try {
+      return fs.readFileSync(target);
+    } catch {
+      return undefined;
+    }
+  }
   addAnalysis(
     id: string,
     session: string,
@@ -292,6 +329,9 @@ export class DurableRepository {
     delete this.store.reviews[id];
     delete this.store.owners[id];
     this.save();
+    const target = path.resolve(this.originalsRoot, id);
+    const root = path.resolve(this.originalsRoot) + path.sep;
+    if (target.startsWith(root)) fs.rmSync(target, { recursive: true, force: true });
     return true;
   }
 }

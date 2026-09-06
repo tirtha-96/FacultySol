@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import type { Assessment, Question } from "@assessai/shared";
 import { api } from "../api";
+import { DocumentCheck } from "./DocumentCheck";
 const parseClos = (value: string) =>
   value
     .split("\n")
@@ -30,6 +31,8 @@ export function SetupReview({
   const [step, setStep] = useState(1);
   const [id, setId] = useState("");
   const [questions, setQuestions] = useState<Question[]>([]);
+  const [currentSource, setCurrentSource] = useState<any>();
+  const [sourcesToVerify, setSourcesToVerify] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [files, setFiles] = useState<
@@ -69,6 +72,7 @@ export function SetupReview({
           .map((name) => ({ name })),
       });
       setId(review.assessment.id);
+      const verificationQueue: any[] = [];
       const uploadFile = async (
         kind: "syllabus" | "current-exam" | "historical-exam",
         title: string,
@@ -81,14 +85,17 @@ export function SetupReview({
         data.append("document", files[kind]!);
         return api.upload(review.assessment.id, data);
       };
-      if (files.syllabus)
-        await uploadFile("syllabus", `${form.courseCode} syllabus`);
-      else if (form.syllabus.trim())
-        await api.source(review.assessment.id, {
+      if (files.syllabus) {
+        verificationQueue.push(
+          await uploadFile("syllabus", `${form.courseCode} syllabus`),
+        );
+      } else if (form.syllabus.trim()) {
+        verificationQueue.push(await api.source(review.assessment.id, {
           kind: "syllabus",
           title: `${form.courseCode} syllabus`,
           text: form.syllabus,
-        });
+        }));
+      }
       const source = files["current-exam"]
         ? await uploadFile("current-exam", form.title, Number(form.year))
         : await api.source(review.assessment.id, {
@@ -98,19 +105,26 @@ export function SetupReview({
             text: form.paper,
           });
       setQuestions(source.questions ?? []);
-      if (files["historical-exam"])
-        await uploadFile(
+      verificationQueue.push(source);
+      if (files["historical-exam"]) {
+        verificationQueue.push(await uploadFile(
           "historical-exam",
           form.historyTitle,
           Number(form.historyYear),
-        );
-      else if (form.history.trim())
-        await api.source(review.assessment.id, {
+        ));
+      } else if (form.history.trim()) {
+        verificationQueue.push(await api.source(review.assessment.id, {
           kind: "historical-exam",
           title: form.historyTitle,
           year: Number(form.historyYear),
           text: form.history,
-        });
+        }));
+      }
+      verificationQueue.sort((a, b) =>
+        a.kind === "current-exam" ? -1 : b.kind === "current-exam" ? 1 : 0,
+      );
+      setSourcesToVerify(verificationQueue);
+      setCurrentSource(verificationQueue[0]);
       setStep(2);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save review");
@@ -141,10 +155,12 @@ export function SetupReview({
           <h1>
             {step === 1
               ? "Add and confirm sources"
-              : "Confirm extracted questions"}
+              : step === 2
+                ? "Verify the original document"
+                : "Confirm extracted questions"}
           </h1>
         </div>
-        <span className="save-chip">Step {step} of 2</span>
+        <span className="save-chip">Step {step} of 3</span>
       </header>
       <main className="setup-form">
         <div className="privacy-note">
@@ -152,8 +168,9 @@ export function SetupReview({
           <p>
             <strong>Before live analysis</strong>
             <span>
-              Confirmed extracted content is sent to the configured AI provider.
-              Raw exam text is not written to application logs.
+              Relevant document content is sent to configured Google Document
+              AI for OCR and confirmed content to Gemini for analysis. Raw exam
+              text is not written to application logs.
             </span>
           </p>
         </div>
@@ -255,7 +272,7 @@ export function SetupReview({
                 Or upload syllabus PDF/TXT
                 <input
                   type="file"
-                  accept=".pdf,.txt,application/pdf,text/plain"
+                  accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/png,image/jpeg"
                   onChange={(e) =>
                     setFiles({ ...files, syllabus: e.target.files?.[0] })
                   }
@@ -282,7 +299,7 @@ export function SetupReview({
                 Or upload current paper PDF/TXT
                 <input
                   type="file"
-                  accept=".pdf,.txt,application/pdf,text/plain"
+                  accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/png,image/jpeg"
                   onChange={(e) =>
                     setFiles({ ...files, "current-exam": e.target.files?.[0] })
                   }
@@ -327,7 +344,7 @@ export function SetupReview({
                 Or upload historical PDF/TXT
                 <input
                   type="file"
-                  accept=".pdf,.txt,application/pdf,text/plain"
+                  accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/png,image/jpeg"
                   onChange={(e) =>
                     setFiles({
                       ...files,
@@ -355,6 +372,22 @@ export function SetupReview({
               </button>
             </div>
           </>
+        ) : step === 2 && currentSource ? (
+          <DocumentCheck
+            key={currentSource.id}
+            assessmentId={id}
+            initialSource={currentSource}
+            onQuestions={(next) => {
+              if (currentSource.kind === "current-exam") setQuestions(next);
+            }}
+            onBack={() => setStep(1)}
+            onComplete={() => {
+              const next = sourcesToVerify.indexOf(currentSource) + 1;
+              if (next < sourcesToVerify.length)
+                setCurrentSource(sourcesToVerify[next]);
+              else setStep(3);
+            }}
+          />
         ) : (
           <>
             <section className="panel">
@@ -446,7 +479,7 @@ export function SetupReview({
               )}
             </section>
             <div className="setup-actions">
-              <button className="secondary" onClick={() => setStep(1)}>
+              <button className="secondary" onClick={() => setStep(2)}>
                 <ArrowLeft /> Back
               </button>
               <button

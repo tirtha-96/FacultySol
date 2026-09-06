@@ -20,11 +20,54 @@ export interface Topic {
 }
 export interface SourceLocator {
   sourceId: string;
+  sourceVersion?: number;
+  pageId?: string;
   page?: number;
+  blockId?: string;
   paragraph?: number;
   start: number;
   end: number;
   excerpt: string;
+  provenance?: "native" | "ocr" | "faculty-correction" | "pasted";
+  boundingRegion?: { x: number; y: number; width: number; height: number };
+}
+export type ExtractionMethod =
+  | "native"
+  | "ocr"
+  | "faculty-correction"
+  | "pasted"
+  | "unavailable";
+export interface SourceBlock {
+  id: string;
+  text: string;
+  boundingRegion?: { x: number; y: number; width: number; height: number };
+  providerConfidence?: number;
+}
+export interface SourcePage {
+  id: string;
+  originalPageIndex: number;
+  displayNumber: number;
+  printedLabel?: string;
+  sourceVersion: number;
+  extractionMethod: ExtractionMethod;
+  provider?: string;
+  providerVersion?: string;
+  text: string;
+  originalText: string;
+  extractionRevisions?: Array<{
+    version: number;
+    method: ExtractionMethod;
+    text: string;
+    provider?: string;
+    createdAt: string;
+  }>;
+  blocks: SourceBlock[];
+  qualityWarnings: string[];
+  providerConfidence?: number;
+  status: "extracted" | "needs-review" | "confirmed" | "excluded" | "unavailable";
+  confirmedAt?: string;
+  correctedAt?: string;
+  exclusionReason?: string;
 }
 export interface SourceDocument {
   id: string;
@@ -36,6 +79,13 @@ export interface SourceDocument {
   text: string;
   locators: SourceLocator[];
   createdAt: string;
+  sourceVersion?: number;
+  sourceHash?: string;
+  extractionCacheKey?: string;
+  storageKey?: string;
+  originalAvailable?: boolean;
+  pages?: SourcePage[];
+  extractionStatus?: "completed" | "partial" | "failed" | "interrupted";
 }
 export interface PreviousQuestion {
   id: string;
@@ -59,6 +109,8 @@ export interface Question {
   parentId?: string;
   isLeaf?: boolean;
   sourceRef?: SourceLocator;
+  excluded?: boolean;
+  visualReviewRequired?: boolean;
   mappingProvenance?: "ai-estimate" | "faculty" | "fixture";
   analysisExplanation?: string;
   analysisEvidence?: SourceLocator[];

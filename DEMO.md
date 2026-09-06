@@ -1,5 +1,24 @@
 # FacultySol three-minute demo
 
+## Document verification journey
+
+1. Create a custom review and upload `fixtures/documents/mixed-native-scan.pdf`.
+2. In **Document Check**, verify native page 1 and that scanned page 2 remains
+   visible instead of being silently omitted.
+3. With Document AI configured, request OCR for page 2. Without it, enter the
+   known synthetic transcription or exclude the page with a reason.
+4. Save a correction, compare it with original extraction, confirm pages, and
+   confirm extraction. Then confirm question boundaries, marks, choice wording,
+   CLOs/topics, and assessed syllabus scope.
+5. Run Gemini analysis, open page evidence, accept an edited proposal, reanalyze,
+   export JSON, and print the report/student paper.
+
+Use `visual-table-equation-diagram.pdf`, `poor-unreadable.jpg`, and
+`bangla-mixed.png` to show honest visual/recovery warnings. These fixtures do
+not establish universal OCR, multilingual, equation, or academic accuracy.
+
+## Existing sample journey
+
 1. Start with `npm run dev`, open <http://localhost:5173>, and choose **Try sample**. Point out the persistent “Sample mode · synthetic material” badge.
 2. In **Findings**, open the historical overlap for Question 5. Show the current and actual synthetic historical question side by side, then contrast it with Question 6(a), which is labeled “shared topic only.”
 3. Open the ambiguous Question 8 and its source evidence. Select **Suggest revision**. The dialog identifies itself as a pre-authored revision tied to this exact sample; it has not changed the paper yet.

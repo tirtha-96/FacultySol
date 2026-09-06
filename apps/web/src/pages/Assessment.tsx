@@ -173,6 +173,21 @@ export function AssessmentPage({
     a.click();
     URL.revokeObjectURL(url);
   };
+  const openSource = async (ref: { sourceId: string; page?: number }) => {
+    try {
+      const url = await api.original(assessment.id, ref.sourceId);
+      window.open(
+        `${url}${ref.page ? `#page=${ref.page}` : ""}`,
+        "_blank",
+        "noopener,noreferrer",
+      );
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Original source is unavailable",
+      );
+    }
+  };
   return (
     <div className={`assessment-page ${paperPrint ? "paper-print" : ""}`}>
       <header className="assessment-head">
@@ -410,6 +425,16 @@ export function AssessmentPage({
                       Source evidence
                     </label>
                     <blockquote>{q.sourceRef.excerpt}</blockquote>
+                    {assessment.sources?.find(
+                      (source) => source.id === q.sourceRef?.sourceId,
+                    )?.originalAvailable && (
+                      <button
+                        className="secondary"
+                        onClick={() => openSource(q.sourceRef!)}
+                      >
+                        <Eye /> Open original page {q.sourceRef.page ?? ""}
+                      </button>
+                    )}
                     <small>
                       Paragraph {q.sourceRef.paragraph ?? "—"} ·{" "}
                       {assessment.sources?.find(
@@ -431,6 +456,16 @@ export function AssessmentPage({
                               (s) => s.id === ref.sourceId,
                             )?.title ?? ref.sourceId}
                           </small>
+                          {assessment.sources?.find(
+                            (source) => source.id === ref.sourceId,
+                          )?.originalAvailable && (
+                            <button
+                              className="secondary"
+                              onClick={() => openSource(ref)}
+                            >
+                              <Eye /> Open page {ref.page ?? ""}
+                            </button>
+                          )}
                         </blockquote>
                       ))
                     ) : (

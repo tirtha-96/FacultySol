@@ -3,8 +3,11 @@ dist
 .env
 *.log
 coverage
+test-results/
 database/dev.db
 uploads/*
 !uploads/.gitkeep
 data/
 apps/api/data/
+*service-account*.json
+google-credentials*.json

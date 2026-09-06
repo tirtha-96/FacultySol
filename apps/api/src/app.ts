@@ -6,8 +6,7 @@ import express, {
 import cors from "cors";
 import helmet from "helmet";
 import multer from "multer";
-import pdf from "pdf-parse";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z, ZodError } from "zod";
 import {
   analyzeAssessment,
@@ -18,19 +17,32 @@ import { repository } from "./repository.js";
 import {
   GeminiAdapter,
   inputHash,
-  locators,
   parseQuestions,
   ModelResultSchema,
   validateAndApplyModel,
+  inspectVisualPage,
   type AiAdapter,
 } from "./analysis.js";
+import {
+  ingestDocument,
+  ocr,
+  providerStatus,
+  rebuildSource,
+  rerunOcrForPage,
+  onePagePdf,
+} from "./ingestion.js";
 let ai: AiAdapter = new GeminiAdapter();
 export const setAiAdapter = (adapter: AiAdapter) => {
   ai = adapter;
 };
 const maxSize = Number(process.env.MAX_UPLOAD_SIZE ?? 10 * 1024 * 1024),
   maxChars = Number(process.env.MAX_ANALYSIS_CHARS ?? 120000);
-const allowed = new Set(["application/pdf", "text/plain"]);
+const allowed = new Set([
+  "application/pdf",
+  "text/plain",
+  "image/png",
+  "image/jpeg",
+]);
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: maxSize, files: 1 },
@@ -189,14 +201,6 @@ app.get("/api/assessments/:id/recommendations", (req, res) => {
     ? res.json({ data: r.analyses.at(-1)!.recommendations })
     : missing(res);
 });
-async function readFile(file: Express.Multer.File) {
-  if (file.mimetype === "text/plain") return file.buffer.toString("utf8");
-  try {
-    return (await pdf(file.buffer)).text;
-  } catch {
-    throw new Error("PDF_EXTRACTION_FAILED");
-  }
-}
 const sourceFields = z.object({
   kind: z.enum(["syllabus", "current-exam", "historical-exam"]),
   title: z.string().min(1).max(160),
@@ -214,51 +218,76 @@ app.post(
           message: "Choose a text-based PDF or TXT file.",
         },
       });
-    const fields = sourceFields.parse(req.body),
-      text = await readFile(req.file);
-    if (!text.trim())
-      return res.status(422).json({
-        error: {
-          code: "LOW_EXTRACTION_QUALITY",
-          message:
-            "No readable text was found. Use a text-based PDF or paste the content.",
+    const fields = sourceFields.parse(req.body);
+    const cacheKey = createHash("sha256")
+      .update(req.file.buffer)
+      .update(`pdfjs-6:${process.env.DOCUMENT_AI_LOCATION ?? ""}:${process.env.DOCUMENT_AI_PROCESSOR_ID ?? ""}:enterprise-document-ocr`)
+      .digest("hex");
+    const cached = repository
+      .get(param(req, "id"), session(req))
+      ?.assessment.sources?.find(
+        (candidate) =>
+          candidate.kind === fields.kind && candidate.extractionCacheKey === cacheKey,
+      );
+    if (cached)
+      return res.status(200).json({
+        data: {
+          ...cached,
+          text: undefined,
+          storageKey: undefined,
+          preview: cached.text.slice(0, 300),
+          questions:
+            cached.kind === "current-exam"
+              ? parseQuestions(cached.text, cached.id, cached)
+              : undefined,
+          cached: true,
         },
       });
-    if (text.length > maxChars)
+    const id = randomUUID();
+    const source = await ingestDocument({
+      id,
+      ...fields,
+      filename: req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_"),
+      mimeType: req.file.mimetype,
+      bytes: req.file.buffer,
+    });
+    source.extractionCacheKey = cacheKey;
+    if (source.text.length > maxChars)
       return res.status(413).json({
         error: {
           code: "CONTENT_TOO_LONG",
           message: `Extracted text exceeds the ${maxChars.toLocaleString()} character analysis limit. Split the document before continuing.`,
         },
       });
-    const id = randomUUID(),
-      source = {
-        id,
-        ...fields,
-        filename: req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_"),
-        mimeType: req.file.mimetype,
-        text,
-        locators: locators(id, text),
-        createdAt: new Date().toISOString(),
-      };
+    source.storageKey = repository.storeOriginal(
+      param(req, "id"),
+      session(req),
+      id,
+      req.file.buffer,
+    );
+    source.originalAvailable = true;
+    const questions =
+      fields.kind === "current-exam"
+        ? parseQuestions(source.text, id, source)
+        : undefined;
     repository.addSource(
       param(req, "id"),
       session(req),
       source,
-      fields.kind === "current-exam" ? parseQuestions(text, id) : undefined,
+      questions,
     );
     res.status(201).json({
       data: {
         ...source,
         text: undefined,
-        preview: text.slice(0, 300),
-        questions:
-          fields.kind === "current-exam" ? parseQuestions(text, id) : undefined,
+        storageKey: undefined,
+        preview: source.text.slice(0, 300),
+        questions,
       },
     });
   }),
 );
-app.post("/api/assessments/:id/sources", (req, res) => {
+app.post("/api/assessments/:id/sources", wrap(async (req, res) => {
   const body = z
     .object({
       kind: z.enum(["syllabus", "current-exam", "historical-exam"]),
@@ -267,38 +296,229 @@ app.post("/api/assessments/:id/sources", (req, res) => {
       text: z.string().min(1).max(maxChars),
     })
     .parse(req.body);
-  const id = randomUUID(),
-    source = {
-      id,
-      ...body,
-      mimeType: "text/plain",
-      text: body.text,
-      locators: locators(id, body.text),
-      createdAt: new Date().toISOString(),
-    };
+  const id = randomUUID();
+  const source = await ingestDocument({
+    id,
+    ...body,
+    filename: `${body.title}.txt`,
+    mimeType: "text/plain",
+    bytes: Buffer.from(body.text),
+    autoOcr: false,
+  });
+  source.pages?.forEach((page) => {
+    page.extractionMethod = "pasted";
+    page.provider = "faculty-pasted-text";
+  });
+  rebuildSource(source);
+  const questions =
+    body.kind === "current-exam"
+      ? parseQuestions(body.text, id, source)
+      : undefined;
   const saved = repository.addSource(
     param(req, "id"),
     session(req),
     source,
-    body.kind === "current-exam" ? parseQuestions(body.text, id) : undefined,
+    questions,
   );
   return saved
     ? res.status(201).json({
         data: {
           ...source,
-          questions:
-            body.kind === "current-exam"
-              ? parseQuestions(body.text, id)
-              : undefined,
+          questions,
         },
       })
     : missing(res);
+}));
+
+app.get("/api/assessments/:id/capabilities", (req, res) => {
+  if (!repository.get(param(req, "id"), session(req))) return missing(res);
+  return res.json({
+    data: {
+      nativeExtraction: "configured",
+      ocr: providerStatus.ocr,
+      gemini: providerStatus.gemini,
+      visualInterpretation: process.env.GEMINI_API_KEY ? "configured" : "unconfigured",
+      ocrMessage: providerStatus.ocrMessage,
+    },
+  });
 });
+
+app.get("/api/assessments/:id/documents/:sourceId/original", (req, res) => {
+  const review = repository.get(param(req, "id"), session(req));
+  const source = review?.assessment.sources?.find(
+    (candidate) => candidate.id === param(req, "sourceId"),
+  );
+  if (!source) return missing(res);
+  const bytes = repository.readOriginal(
+    param(req, "id"),
+    session(req),
+    source.id,
+  );
+  if (!bytes) return missing(res);
+  res.type(source.mimeType);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("Content-Disposition", `inline; filename="${source.filename ?? "source"}"`);
+  return res.send(bytes);
+});
+
+const pageReviewSchema = z.object({
+  text: z.string().max(maxChars).optional(),
+  action: z.enum(["save", "confirm", "exclude"]).default("save"),
+  exclusionReason: z.string().min(3).max(500).optional(),
+});
+app.patch("/api/assessments/:id/documents/:sourceId/pages/:pageId", (req, res) => {
+  const review = repository.get(param(req, "id"), session(req));
+  const source = review?.assessment.sources?.find(
+    (candidate) => candidate.id === param(req, "sourceId"),
+  );
+  const page = source?.pages?.find((candidate) => candidate.id === param(req, "pageId"));
+  if (!review || !source || !page) return missing(res);
+  const body = pageReviewSchema.parse(req.body);
+  if (body.action === "exclude" && !body.exclusionReason)
+    return res.status(400).json({ error: { code: "EXCLUSION_REASON_REQUIRED", message: "Explain why this page is excluded." } });
+  if (body.text !== undefined && body.text !== page.text) {
+    page.text = body.text;
+    page.extractionMethod = "faculty-correction";
+    page.correctedAt = new Date().toISOString();
+    page.sourceVersion += 1;
+    page.extractionRevisions = [
+      ...(page.extractionRevisions ?? []),
+      {
+        version: page.sourceVersion,
+        method: "faculty-correction",
+        text: body.text,
+        provider: "faculty",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    page.blocks = [{ id: `faculty-${page.sourceVersion}`, text: body.text }];
+  }
+  if (body.action === "confirm") {
+    page.status = "confirmed";
+    page.confirmedAt = new Date().toISOString();
+    page.exclusionReason = undefined;
+  } else if (body.action === "exclude") {
+    page.status = "excluded";
+    page.exclusionReason = body.exclusionReason;
+  } else if (body.text !== undefined) page.status = "needs-review";
+  source.sourceVersion = (source.sourceVersion ?? 1) + 1;
+  rebuildSource(source);
+  const questions = source.kind === "current-exam"
+    ? parseQuestions(source.text, source.id, source)
+    : undefined;
+  repository.updateSource(param(req, "id"), session(req), source, questions);
+  return res.json({ data: { source, questions } });
+});
+
+app.post("/api/assessments/:id/documents/:sourceId/confirm", (req, res) => {
+  const review = repository.get(param(req, "id"), session(req));
+  const source = review?.assessment.sources?.find(
+    (candidate) => candidate.id === param(req, "sourceId"),
+  );
+  if (!review || !source?.pages) return missing(res);
+  const unavailable = source.pages.filter((page) => page.status === "unavailable");
+  if (unavailable.length)
+    return res.status(409).json({
+      error: {
+        code: "UNREADABLE_PAGES",
+        message: `${unavailable.length} page(s) still require transcription, OCR, replacement, or explicit exclusion.`,
+      },
+    });
+  const now = new Date().toISOString();
+  source.pages.forEach((page) => {
+    if (page.status !== "excluded") {
+      page.status = "confirmed";
+      page.confirmedAt = now;
+    }
+  });
+  source.sourceVersion = (source.sourceVersion ?? 1) + 1;
+  rebuildSource(source);
+  const questions = source.kind === "current-exam"
+    ? parseQuestions(source.text, source.id, source)
+    : undefined;
+  repository.updateSource(param(req, "id"), session(req), source, questions);
+  return res.json({ data: { source, questions } });
+});
+
+app.post(
+  "/api/assessments/:id/documents/:sourceId/pages/:pageId/ocr",
+  wrap(async (req, res) => {
+    const review = repository.get(param(req, "id"), session(req));
+    const source = review?.assessment.sources?.find(
+      (candidate) => candidate.id === param(req, "sourceId"),
+    );
+    const page = source?.pages?.find((candidate) => candidate.id === param(req, "pageId"));
+    if (!review || !source || !page) return missing(res);
+    const bytes = repository.readOriginal(param(req, "id"), session(req), source.id);
+    if (!bytes) return missing(res);
+    await rerunOcrForPage(source, bytes, page.originalPageIndex);
+    const questions = source.kind === "current-exam"
+      ? parseQuestions(source.text, source.id, source)
+      : undefined;
+    repository.updateSource(param(req, "id"), session(req), source, questions);
+    return res.json({ data: { source, questions } });
+  }),
+);
+
+app.post(
+  "/api/assessments/:id/documents/:sourceId/pages/:pageId/visual-inspection",
+  wrap(async (req, res) => {
+    const review = repository.get(param(req, "id"), session(req));
+    const source = review?.assessment.sources?.find(
+      (candidate) => candidate.id === param(req, "sourceId"),
+    );
+    const page = source?.pages?.find((candidate) => candidate.id === param(req, "pageId"));
+    if (!review || !source || !page) return missing(res);
+    if (!process.env.GEMINI_API_KEY)
+      return res.status(503).json({ error: { code: "AI_NOT_CONFIGURED", message: "Gemini visual inspection is not configured. Verify the original manually or add a faculty correction." } });
+    const original = repository.readOriginal(param(req, "id"), session(req), source.id);
+    if (!original) return missing(res);
+    const content = source.mimeType === "application/pdf"
+      ? await onePagePdf(original, page.originalPageIndex)
+      : original;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Number(process.env.AI_TIMEOUT_MS ?? 45000));
+    try {
+      providerStatus.gemini = "checking";
+      const result = await inspectVisualPage(
+        content,
+        source.mimeType,
+        { sourceId: source.id, pageId: page.id, page: page.displayNumber, confirmedText: page.text },
+        controller.signal,
+      );
+      providerStatus.gemini = "verified";
+      return res.json({ data: { ...result, sourceRef: { sourceId: source.id, sourceVersion: page.sourceVersion, pageId: page.id, page: page.displayNumber }, provenance: "gemini-visual-interpretation" } });
+    } catch (error) {
+      providerStatus.gemini = "failed";
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }),
+);
 app.post(
   "/api/assessments/:id/analyze",
   wrap(async (req, res) => {
     const r = repository.get(param(req, "id"), session(req));
     if (!r) return missing(res);
+    const blockedPages = (r.assessment.sources ?? [])
+      .filter((source) => source.kind === "current-exam")
+      .flatMap((source) => source.pages ?? [])
+      .filter((page) => page.status === "unavailable");
+    if (blockedPages.length)
+      return res.status(409).json({
+        error: {
+          code: "DOCUMENT_REVIEW_REQUIRED",
+          message: `${blockedPages.length} current-paper page(s) have no usable text. Correct, OCR, or explicitly exclude them before analysis.`,
+        },
+      });
+    if (r.assessment.questions.some((question) => question.visualReviewRequired))
+      return res.status(409).json({
+        error: {
+          code: "VISUAL_REVIEW_REQUIRED",
+          message: "At least one question depends on unverified visual content. Confirm its original page or explicitly exclude it before analysis.",
+        },
+      });
     const hash = inputHash(r.assessment);
     const totalCharacters = (r.assessment.sources ?? []).reduce(
       (sum, source) => sum + source.text.length,
@@ -346,10 +566,13 @@ app.post(
       const analyzedAssessment = structuredClone(r.assessment);
       let model;
       try {
+        providerStatus.gemini = "checking";
         model = ModelResultSchema.parse(
           await ai.analyze(analyzedAssessment, controller.signal),
         );
+        providerStatus.gemini = "verified";
       } catch (error) {
+        providerStatus.gemini = "failed";
         if (error instanceof ZodError) throw new Error("INVALID_MODEL_OUTPUT");
         throw error;
       }
@@ -498,6 +721,23 @@ app.get("/api/assessments/:id/report", (req, res) => {
           assessment: r.assessment,
           analysis: r.analyses.at(-1),
           sources: r.assessment.sources?.map(({ text, ...s }) => s),
+          documentCoverage: r.assessment.sources?.map((source) => ({
+            sourceId: source.id,
+            sourceVersion: source.sourceVersion,
+            title: source.title,
+            totalPages: source.pages?.length ?? 1,
+            extractionMethods: [...new Set(source.pages?.map((page) => page.extractionMethod) ?? ["pasted"])],
+            confirmedPages: source.pages?.filter((page) => page.status === "confirmed").map((page) => page.displayNumber) ?? [],
+            excludedPages: source.pages?.filter((page) => page.status === "excluded").map((page) => ({ page: page.displayNumber, reason: page.exclusionReason })) ?? [],
+            pagesNeedingReview: source.pages?.filter((page) => ["needs-review", "unavailable"].includes(page.status)).map((page) => page.displayNumber) ?? [],
+          })),
+          analysisMode: r.analyses.at(-1)?.generatedBy,
+          analysisVersion: r.analyses.at(-1)?.version,
+          remainingLimitations: [
+            "OCR and quote matching do not prove educational interpretation is correct.",
+            "Gemini visual descriptions are interpretations, not verified source transcription.",
+            ...(r.analyses.at(-1)?.limitations ?? []),
+          ],
           revisions: r.revisions,
           generatedAt: new Date().toISOString(),
         },
@@ -530,9 +770,30 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     return res.status(415).json({
       error: {
         code: "UNSUPPORTED_FILE",
-        message:
-          "Only text-based PDF and TXT files are supported. DOCX and scanned-image OCR are not available.",
+        message: "Supported formats are PDF, TXT, PNG, and JPEG. DOCX is not supported.",
       },
+    });
+  if (msg === "OCR_NOT_CONFIGURED")
+    return res.status(503).json({
+      error: {
+        code: "OCR_NOT_CONFIGURED",
+        message: "Document AI OCR is not configured. The original remains available for manual transcription or replacement upload.",
+      },
+    });
+  if (msg.startsWith("OCR_"))
+    return res.status(502).json({
+      error: {
+        code: msg,
+        message: "Document AI OCR did not complete. Existing extraction and the original are preserved.",
+      },
+    });
+  if (msg === "PDF_PASSWORD_PROTECTED")
+    return res.status(422).json({
+      error: { code: msg, message: "Password-protected PDFs cannot be processed. Upload an unlocked copy." },
+    });
+  if (msg === "TOO_MANY_PAGES" || msg === "IMAGE_TOO_LARGE")
+    return res.status(413).json({
+      error: { code: msg, message: "This document exceeds the configured page or pixel limit. Split or resize it without removing required content." },
     });
   if (msg === "PDF_EXTRACTION_FAILED")
     return res.status(422).json({

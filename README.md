@@ -6,7 +6,9 @@ FacultySol is an evidence-backed assessment review assistant for university facu
 
 ## What works
 
-- Pasted text and text-based PDF/TXT ingestion with source identity, full stored text, paragraph/offset locators, file-size and extracted-text limits.
+- Page-aware PDF, PNG/JPEG, TXT, and pasted-text ingestion. Native PDF text is kept by physical page; mixed/image pages route to Google Cloud Document AI when configured.
+- A Document Check workspace presents the ownership-protected original beside extracted text, with navigation, zoom, warnings, page OCR, corrections, confirmation, and explicit exclusion.
+- Immutable native/OCR text plus extraction revisions, page/block IDs, physical page mappings, available normalized coordinates, OCR confidence, and correction provenance.
 - Faculty confirmation of parsed question text, marks, outcomes, and topics. Unknown values remain visible.
 - Server-only Gemini adapter using structured JSON output and Zod validation. Custom content never falls back to sample semantic results.
 - Exact evidence validation after documented whitespace normalization (`/\s+/g` becomes one space). Invented/unresolvable quotes are withheld.
@@ -37,6 +39,22 @@ GEMINI_MODEL=gemini-2.5-flash
 
 The integration follows Google's documented `generateContent` endpoint and structured-output configuration. Raw source text is sent only from the API process and is not logged. FacultySol makes no provider-retention claim; consult the provider terms applicable to your account.
 
+## Document AI OCR setup
+
+Gemini and Document AI are separate services. For scanned-page OCR, create an
+**Enterprise Document OCR** processor, enable the API/billing, and provide:
+
+```env
+DOCUMENT_AI_PROJECT_ID=your-project
+DOCUMENT_AI_LOCATION=us
+DOCUMENT_AI_PROCESSOR_ID=your-processor-id
+```
+
+Authenticate the API server with supported [Application Default Credentials](https://cloud.google.com/document-ai/docs/authentication), such as `gcloud auth application-default login` locally or an attached service account in Google Cloud. If a local credential file is needed, keep it outside the repository and set `GOOGLE_APPLICATION_CREDENTIALS`. A Gemini API key does not configure OCR. See [Enterprise Document OCR](https://cloud.google.com/document-ai/docs/enterprise-document-ocr), [Gemini document processing](https://ai.google.dev/gemini-api/docs/document-processing), and [structured output](https://ai.google.dev/gemini-api/docs/structured-output).
+
+An assessment-owned capability route distinguishes `configured` from
+`verified`; only a successful bounded provider request marks a service verified.
+
 ## Persistence
 
 Development uses `DEV_DATA_FILE` (default `./data/reviews.json`). Writes use a temporary file plus atomic rename; the file is durable across API restarts and is deliberately gitignored. This adapter is for a single server instance, not horizontally scaled deployment.
@@ -61,17 +79,18 @@ The aggregate indicator is experimental. It is not an accreditation judgment, do
 
 ## Formats and limits
 
-- Supported: pasted text, TXT, text-based PDF.
-- Unsupported: DOCX extraction, OCR/scanned PDFs.
-- Defaults: one file per upload, 10 MB per file, 120,000 extracted characters per source, 45-second provider timeout, one bounded retry for transient provider errors.
+- Supported: pasted text, TXT, selectable/scanned/mixed PDF, PNG, and JPEG.
+- Unsupported: DOCX and password-protected PDF.
+- Defaults: one file per upload, 10 MB per file, 80 PDF pages, 40 megapixels per image, 120,000 analysis characters, 60-second OCR timeout, 45-second Gemini timeout, one bounded Gemini retry for transient provider errors.
 - Questions should begin on separate lines, for example `2(a) Analyze… (8 marks)`. Faculty confirms the extraction before analysis.
 
 ## Current limitations
 
 - PostgreSQL/Prisma route persistence is not wired; JSON is the explicit durable development adapter.
 - Authentication is anonymous-session ownership, not institutional SSO. Clearing browser storage loses the session identifier, though records remain on disk.
-- PDF page numbers from `pdf-parse` are not reliably preserved; paragraph and character locators are retained. Pasted text uses paragraph/character locators.
-- Custom live-provider behavior was implemented and test-doubled, but not exercised against Gemini because no credential was present.
+- Printed page labels are not inferred; physical PDF page indices/display numbers are preserved separately. PDF rendering depends on the browser PDF viewer.
+- Live Document AI and Gemini calls require external credentials, processor/model access, billing, and representative-language evaluation. Without them, local boundaries are tested but live behavior remains unverified.
+- OCR confidence is provider-supplied only. Native extraction has heuristic warnings, not invented confidence. Equations, handwriting, diagrams, and Bangla require faculty evaluation.
 - Similarity is produced by the bounded model comparison; no vector database is used. Scores are indicators, not copying probabilities.
 - Choice coverage is offered-question coverage. Guaranteed CLO coverage across answer-any-N combinations is explicitly not calculated.
 - Per-question rubrics and contextual follow-up chat were deferred to protect the P0/P1 workflow.

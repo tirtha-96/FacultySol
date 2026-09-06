@@ -1,6 +1,31 @@
 {
-  "name":"@assessai/web","version":"1.0.0","private":true,"type":"module",
-  "scripts":{"dev":"vite","build":"tsc -b && vite build","test":"vitest run"},
-  "dependencies":{"@assessai/shared":"*","@vitejs/plugin-react":"^4.4.1","lucide-react":"^0.468.0","react":"^19.0.0","react-dom":"^19.0.0","react-router-dom":"^7.5.0","recharts":"^2.15.1","vite":"^6.2.5"},
-  "devDependencies":{"@testing-library/jest-dom":"^6.6.3","@testing-library/react":"^16.3.0","@types/react":"^19.0.10","@types/react-dom":"^19.0.4","jsdom":"^26.0.0","typescript":"~5.8.2","vitest":"^3.1.1"}
+  "name": "@assessai/web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@assessai/shared": "*",
+    "@vitejs/plugin-react": "^4.4.1",
+    "lucide-react": "^0.468.0",
+    "pdfjs-dist": "^6.3.289",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.5.0",
+    "recharts": "^2.15.1",
+    "vite": "^6.2.5"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "jsdom": "^26.0.0",
+    "typescript": "~5.8.2",
+    "vitest": "^3.1.1"
+  }
 }

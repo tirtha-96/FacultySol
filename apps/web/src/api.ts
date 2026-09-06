@@ -68,6 +68,32 @@ export const api = {
     }),
   upload: (id: string, data: FormData) =>
     call<any>(`/assessments/${id}/documents`, { method: "POST", body: data }),
+  capabilities: (id: string) => call<any>(`/assessments/${id}/capabilities`),
+  original: async (id: string, sourceId: string) => {
+    const response = await fetch(
+      `${API}/assessments/${id}/documents/${sourceId}/original`,
+      { headers: { "x-facultysol-session": session() } },
+    );
+    if (!response.ok) throw new Error("Original source is unavailable");
+    return URL.createObjectURL(await response.blob());
+  },
+  reviewPage: (id: string, sourceId: string, pageId: string, body: unknown) =>
+    call<any>(`/assessments/${id}/documents/${sourceId}/pages/${pageId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  ocrPage: (id: string, sourceId: string, pageId: string) =>
+    call<any>(`/assessments/${id}/documents/${sourceId}/pages/${pageId}/ocr`, {
+      method: "POST",
+    }),
+  inspectVisual: (id: string, sourceId: string, pageId: string) =>
+    call<any>(`/assessments/${id}/documents/${sourceId}/pages/${pageId}/visual-inspection`, {
+      method: "POST",
+    }),
+  confirmDocument: (id: string, sourceId: string) =>
+    call<any>(`/assessments/${id}/documents/${sourceId}/confirm`, {
+      method: "POST",
+    }),
   analyze: (id: string) =>
     call<Analysis>(`/assessments/${id}/analyze`, { method: "POST" }),
   suggest: (id: string, qid: string, body: unknown) =>

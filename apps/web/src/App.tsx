@@ -1,11 +1,17 @@
 import { useEffect, useState } from "react";
 import {
   ArrowRight,
+  BarChart3,
+  CheckCircle2,
   FileCheck2,
   FilePlus2,
   FolderOpen,
+  GitCompareArrows,
+  ListChecks,
   RefreshCw,
+  Route,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import type { Analysis, Assessment, Revision } from "@assessai/shared";
 import { Brand } from "./components/Brand";
@@ -115,43 +121,106 @@ export default function App() {
       </header>
       <main className="home-main">
         <section className="home-hero">
-          <span className="eyebrow">
-            <ShieldCheck /> EVIDENCE-BACKED · FACULTY APPROVED
-          </span>
-          <h1>Review your exam before your students take it.</h1>
-          <p>
-            FacultySol checks confirmed questions against the syllabus and
-            historical papers, explains its evidence, and keeps every revision
-            under your control.
-          </p>
-          <div className="entry-actions">
-            <button className="primary" onClick={() => setView("setup")}>
-              <FilePlus2 />
-              Review a new paper <ArrowRight />
-            </button>
-            <button
-              className="secondary"
-              disabled={!latest}
-              onClick={() => latest && open(latest.id)}
-            >
-              <FolderOpen />
-              Continue a review
-            </button>
-            <button className="secondary" onClick={sample}>
-              <FileCheck2 />
-              Try sample
-            </button>
+          <div className="hero-copy">
+            <span className="eyebrow">
+              <ShieldCheck /> EVIDENCE-BACKED · FACULTY APPROVED
+            </span>
+            <h1>
+              Review your exam with <em>clarity.</em>
+            </h1>
+            <p>
+              FacultySol checks confirmed questions against the syllabus and
+              historical papers, explains its evidence, and keeps every revision
+              under your control.
+            </p>
+            <div className="entry-actions">
+              <button className="primary" onClick={() => setView("setup")}>
+                <FilePlus2 />
+                Review a new paper <ArrowRight />
+              </button>
+              <button
+                className="secondary"
+                disabled={!latest}
+                onClick={() => latest && open(latest.id)}
+              >
+                <FolderOpen />
+                Continue a review
+              </button>
+              <button className="secondary sample-button" onClick={sample}>
+                <FileCheck2 />
+                Try sample
+              </button>
+            </div>
+            <small>
+              Sample material is synthetic and imported into your private browser
+              session.
+            </small>
           </div>
-          <small>
-            Sample material is synthetic and imported into your private browser
-            session.
-          </small>
+          <div className="home-preview" aria-label="FacultySol workflow preview">
+            <div className="preview-glow" />
+            <article className="preview-document">
+              <header>
+                <span className="preview-icon"><FileCheck2 /></span>
+                <div>
+                  <small>DATABASE SYSTEMS</small>
+                  <strong>Midterm review</strong>
+                </div>
+                <span className="preview-ready"><span /> Ready</span>
+              </header>
+              <div className="preview-progress">
+                <span className="done"><CheckCircle2 /> Prepare</span>
+                <i />
+                <span className="current">2</span>
+                <i />
+                <span>3</span>
+              </div>
+              <div className="preview-finding">
+                <span><Route /></span>
+                <div>
+                  <small>CHOICE COVERAGE</small>
+                  <strong>CLO-3 can be skipped</strong>
+                  <p>A valid 30-mark route avoids this outcome.</p>
+                </div>
+                <ArrowRight />
+              </div>
+              <div className="preview-metrics">
+                <div><span>Questions</span><strong>6</strong><small>confirmed</small></div>
+                <div><span>Outcomes</span><strong>4</strong><small>in scope</small></div>
+                <div><span>Routes</span><strong>20</strong><small>checked</small></div>
+              </div>
+            </article>
+            <article className="preview-note">
+              <Sparkles />
+              <div><strong>Revision sandbox</strong><span>Preview impact before applying</span></div>
+              <CheckCircle2 />
+            </article>
+          </div>
+        </section>
+        <section className="capability-grid" aria-label="FacultySol capabilities">
+          <article className="capability-card coral">
+            <span className="capability-icon"><Route /></span>
+            <div><small>01 · CHECK</small><h2>Choice coverage</h2></div>
+            <p>See whether a valid question selection can avoid an intended outcome.</p>
+            <span className="capability-foot"><BarChart3 /> Exact route calculations</span>
+          </article>
+          <article className="capability-card violet">
+            <span className="capability-icon"><GitCompareArrows /></span>
+            <div><small>02 · COMPARE</small><h2>Revision sandbox</h2></div>
+            <p>Preview the consequences of a change before updating the saved draft.</p>
+            <span className="capability-foot"><Sparkles /> Current vs proposed</span>
+          </article>
+          <article className="capability-card teal">
+            <span className="capability-icon"><ListChecks /></span>
+            <div><small>03 · DECIDE</small><h2>Preflight review</h2></div>
+            <p>Work through the most important remaining findings before finalizing.</p>
+            <span className="capability-foot"><ShieldCheck /> Faculty stays in control</span>
+          </article>
         </section>
         <section className="recent-reviews">
           <div className="section-title">
             <div>
               <h2>Your saved reviews</h2>
-              <p>Durable development storage · isolated by anonymous session</p>
+              <p>Pick up where you left off, with sources and decisions intact.</p>
             </div>
             <button
               className="icon-button"
@@ -180,8 +249,11 @@ export default function App() {
             <div className="review-cards">
               {custom.map((r) => (
                 <button key={r.id} onClick={() => open(r.id)}>
+                  <span className="review-card-icon">
+                    {r.course.code.slice(0, 2).toUpperCase()}
+                  </span>
                   <div>
-                    <span>{r.course.code}</span>
+                    <span>{r.course.code} · FACULTY REVIEW</span>
                     <strong>
                       {r.title} · {r.year}
                     </strong>
@@ -198,7 +270,7 @@ export default function App() {
                     <b>{r.analysis?.overallScore ?? "—"}</b>
                     <small>experimental</small>
                   </div>
-                  <ArrowRight />
+                  <span className="review-card-arrow"><ArrowRight /></span>
                 </button>
               ))}
             </div>

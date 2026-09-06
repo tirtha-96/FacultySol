@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
+import fs from "node:fs";
+import path from "node:path";
 import { app, setAiAdapter } from "./app";
 import { repository } from "./repository";
 beforeEach(() => repository.reset());
@@ -168,5 +170,68 @@ describe("assessment API", () => {
       ).status,
     ).toBe(404);
     delete process.env.GEMINI_API_KEY;
+  });
+  it("protects originals by owner and removes derived bytes on deletion", async () => {
+    const owner = "document-owner";
+    const created = await request(app)
+      .post("/api/assessments")
+      .set("x-facultysol-session", owner)
+      .send({
+        courseCode: "CSE",
+        courseName: "Document testing",
+        title: "Fixture",
+        year: 2026,
+        totalMarks: 15,
+        duration: 60,
+      });
+    const id = created.body.data.id;
+    const upload = await request(app)
+      .post(`/api/assessments/${id}/documents`)
+      .set("x-facultysol-session", owner)
+      .field("kind", "current-exam")
+      .field("title", "Synthetic native fixture")
+      .attach(
+        "document",
+        fs.readFileSync(path.resolve("../../fixtures/documents/selectable-two-page.pdf")),
+        { filename: "fixture.pdf", contentType: "application/pdf" },
+      );
+    expect(upload.status).toBe(201);
+    const sourceId = upload.body.data.id;
+    expect(upload.body.data.pages[1].displayNumber).toBe(2);
+    expect(
+      (
+        await request(app)
+          .get(`/api/assessments/${id}/documents/${sourceId}/original`)
+          .set("x-facultysol-session", "different-owner")
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await request(app)
+          .get(`/api/assessments/${id}/documents/${sourceId}/original`)
+          .set("x-facultysol-session", owner)
+      ).status,
+    ).toBe(200);
+    const ocrAttempt = await request(app)
+      .post(
+        `/api/assessments/${id}/documents/${sourceId}/pages/${upload.body.data.pages[0].id}/ocr`,
+      )
+      .set("x-facultysol-session", owner);
+    expect(ocrAttempt.status).toBe(503);
+    expect(ocrAttempt.body.error.code).toBe("OCR_NOT_CONFIGURED");
+    expect(
+      (
+        await request(app)
+          .delete(`/api/assessments/${id}`)
+          .set("x-facultysol-session", owner)
+      ).status,
+    ).toBe(204);
+    expect(
+      (
+        await request(app)
+          .get(`/api/assessments/${id}/documents/${sourceId}/original`)
+          .set("x-facultysol-session", owner)
+      ).status,
+    ).toBe(404);
   });
 });
