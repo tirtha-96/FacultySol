@@ -1,0 +1,169 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AssessmentStatus { DRAFT PROCESSING ANALYZED REVIEWED }
+enum ReviewDecision { PENDING ACCEPTED DISMISSED EDITED }
+enum Severity { LOW MEDIUM HIGH CRITICAL }
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  university   String?
+  courses      Course[]
+  createdAt    DateTime @default(now())
+}
+
+model Course {
+  id          String   @id @default(cuid())
+  code        String
+  name        String
+  description String?
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clos        CourseLearningOutcome[]
+  topics      SyllabusTopic[]
+  assessments Assessment[]
+  createdAt   DateTime @default(now())
+  @@unique([userId, code])
+}
+
+model CourseLearningOutcome {
+  id           String @id @default(cuid())
+  code         String
+  description  String
+  targetWeight Float
+  courseId     String
+  course       Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+}
+
+model SyllabusTopic {
+  id           String @id @default(cuid())
+  name         String
+  targetWeight Float
+  courseId     String
+  course       Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+}
+
+model Assessment {
+  id          String           @id @default(cuid())
+  title       String
+  academicYear Int
+  totalMarks  Float
+  duration    Int
+  isHistorical Boolean         @default(false)
+  status      AssessmentStatus @default(DRAFT)
+  courseId    String
+  course      Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  documents   AssessmentDocument[]
+  questions   Question[]
+  analyses    AssessmentAnalysis[]
+  settings    AnalysisSettings?
+  createdAt   DateTime @default(now())
+}
+
+model AssessmentDocument {
+  id             String   @id @default(cuid())
+  filename       String
+  kind           String
+  mimeType       String
+  size           Int
+  extractionText String?
+  extractionQuality Float?
+  assessmentId   String
+  assessment     Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+}
+
+model Question {
+  id            String   @id @default(cuid())
+  number        String
+  text          String
+  section       String?
+  marks         Float
+  assessmentId  String
+  assessment    Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  analyses      QuestionAnalysis[]
+  sourceSimilarities QuestionSimilarity[] @relation("source")
+  matchedSimilarities QuestionSimilarity[] @relation("matched")
+}
+
+model QuestionAnalysis {
+  id          String   @id @default(cuid())
+  topic       String
+  cloCode     String
+  bloomLevel  String
+  difficulty  String
+  confidence  Float
+  concerns    Json
+  explanation String
+  questionId  String
+  question    Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+}
+
+model QuestionSimilarity {
+  id                String @id @default(cuid())
+  sourceQuestionId  String
+  matchedQuestionId String
+  score             Float
+  reason            String
+  sourceQuestion    Question @relation("source", fields: [sourceQuestionId], references: [id], onDelete: Cascade)
+  matchedQuestion   Question @relation("matched", fields: [matchedQuestionId], references: [id], onDelete: Cascade)
+}
+
+model AssessmentAnalysis {
+  id            String   @id @default(cuid())
+  version       Int
+  overallScore  Float
+  statusLabel   String
+  components    Json
+  distributions Json
+  summary       String
+  assessmentId  String
+  assessment    Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  recommendations Recommendation[]
+  createdAt     DateTime @default(now())
+  @@unique([assessmentId, version])
+}
+
+model Recommendation {
+  id          String   @id @default(cuid())
+  title       String
+  severity    Severity
+  reason      String
+  evidence    String
+  action      String
+  targetId    String?
+  analysisId  String
+  analysis    AssessmentAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  review      FacultyReview?
+}
+
+model FacultyReview {
+  id               String @id @default(cuid())
+  decision         ReviewDecision @default(PENDING)
+  approvedValue    Json?
+  note              String?
+  recommendationId String @unique
+  recommendation   Recommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+  reviewedAt       DateTime @updatedAt
+}
+
+model AnalysisSettings {
+  id                    String @id @default(cuid())
+  assessmentId          String @unique
+  assessment            Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  componentWeights      Json
+  desiredBloom          Json
+  desiredDifficulty     Json
+  similarityModerate    Float @default(0.50)
+  similarityHigh        Float @default(0.75)
+}

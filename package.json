@@ -1,0 +1,21 @@
+{
+  "name": "assessai",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w @assessai/api\" \"npm run dev -w @assessai/web\"",
+    "build": "npm run build -w @assessai/shared && npm run build -w @assessai/api && npm run build -w @assessai/web",
+    "test": "npm run test -w @assessai/shared && npm run test -w @assessai/api && npm run test -w @assessai/web",
+    "db:generate": "prisma generate --schema database/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema database/schema.prisma",
+    "db:seed": "tsx database/seed.ts"
+  },
+  "devDependencies": {
+    "@prisma/client": "^6.6.0",
+    "concurrently": "^9.1.2",
+    "prisma": "^6.6.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

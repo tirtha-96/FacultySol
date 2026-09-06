@@ -1,0 +1,2 @@
+const colors=['#285f54','#4b8b7d','#df9e54','#8c6b4e','#637c97','#a57b8a'];
+export function DistributionBars({data}:{data:Record<string,number>}){return <div className="bars">{Object.entries(data).map(([label,value],i)=><div className="bar-row" key={label}><div><span>{label}</span><strong>{value}%</strong></div><div className="track"><span style={{width:`${value}%`,background:colors[i%colors.length]}}/></div></div>)}</div>}

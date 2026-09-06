@@ -1,0 +1,1 @@
+{"name":"@assessai/shared","version":"1.0.0","type":"module","main":"src/index.ts","scripts":{"build":"tsc -p tsconfig.json","test":"vitest run"},"devDependencies":{"vitest":"^3.1.1"}}
